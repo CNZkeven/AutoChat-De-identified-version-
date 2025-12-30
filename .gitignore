@@ -2,3 +2,5 @@
 .pgdata/
 .DS_Store
 .serena/
+__pycache__/
+*.pyc
