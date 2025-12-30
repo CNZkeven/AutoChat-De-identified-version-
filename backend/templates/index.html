@@ -1,0 +1,66 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>协同智能体系</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar">
+    <div class="container">
+        <div class="site-title">船舶与海洋智能体</div>
+        <div class="nav-container">
+            <a href="{{ url_for('course') }}" class="nav-item">课程智能体</a>
+            <a href="{{ url_for('task') }}" class="nav-item">任务智能体</a>
+            {% if current_user() %}
+            <span class="nav-item">你好，{{ current_user() }}</span>
+            <a href="{{ url_for('logout') }}" class="nav-item">登出</a>
+            {% else %}
+            <a href="{{ url_for('login') }}" class="nav-item">登录</a>
+            <a href="{{ url_for('register') }}" class="nav-item">注册</a>
+            {% endif %}
+        </div>
+    </div>
+    </nav>
+
+    <!-- 主内容区 -->
+    <div class="agent-container">
+        <div class="sub-agents">
+            <a href="{{ url_for('task') }}" class="agent-card" data-agent="task">
+                <div class="agent-card-inner">
+                    <div class="agent-card-front">
+                        <div class="agent-header">
+                            <h3>任务型智能体</h3>
+                        </div>
+                        <div class="agent-image">
+                            <img src="{{ url_for('static', filename='images/task.jpg') }}" alt="任务智能体" />
+                        </div>
+                    </div>
+                    <div class="agent-card-back">
+                        <p>协助完成特定学习任务的智能体，提供任务指导和资源支持</p>
+                    </div>
+                </div>
+            </a>
+            <a href="{{ url_for('course') }}" class="agent-card" data-agent="course">
+                <div class="agent-card-inner">
+                    <div class="agent-card-front">
+                        <div class="agent-header">
+                            <h3>课程型智能体</h3>
+                        </div>
+                        <div class="agent-image">
+                            <img src="{{ url_for('static', filename='images/course.jpg') }}" alt="课程智能体" />
+                        </div>
+                    </div>
+                    <div class="agent-card-back">
+                        <p>针对特定课程内容的智能体，提供课程学习和辅导功能</p>
+                    </div>
+                </div>
+            </a>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='image-config.js') }}"></script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,199 @@
+import json
+import logging
+from datetime import datetime
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+
+from ..config import OPENAI_API_KEY
+from ..db import SessionLocal, get_db
+from ..deps import get_current_user
+from ..models import Conversation, Message, User
+from ..schemas import ChatMessage, ChatRequest
+from ..services.ai import call_ai_model_stream
+from ..services.memory import fetch_latest_memory_summary
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["chat"])
+
+AGENT_CONFIG = {
+    "ideological": {
+        "title": "Ideological Agent",
+        "greeting": "I can help with ideological topics.",
+        "model": "ft:LoRA/Qwen/Qwen2.5-7B-Instruct:olsujb67sl:tlp:kxywjlfohjnttnuobawy-ckpt_step_2",
+    },
+    "evaluation": {
+        "title": "Evaluation Agent",
+        "greeting": "I can help with evaluations.",
+        "model": "ft:LoRA/Qwen/Qwen2.5-7B-Instruct:olsujb67sl:tlp:kxywjlfohjnttnuobawy-ckpt_step_2",
+    },
+    "task": {
+        "title": "Task Agent",
+        "greeting": "I can help with task guidance.",
+        "model": "ft:LoRA/Qwen/Qwen2.5-7B-Instruct:olsujb67sl:tlp:kxywjlfohjnttnuobawy-ckpt_step_2",
+    },
+    "exploration": {
+        "title": "Exploration Agent",
+        "greeting": "I can help with exploration and research.",
+        "model": "ft:LoRA/Qwen/Qwen2.5-7B-Instruct:olsujb67sl:tlp:kxywjlfohjnttnuobawy-ckpt_step_2",
+    },
+    "competition": {
+        "title": "Competition Agent",
+        "greeting": "I can help with competition preparation.",
+        "model": "ft:LoRA/Qwen/Qwen2.5-7B-Instruct:olsujb67sl:tlp:kxywjlfohjnttnuobawy-ckpt_step_2",
+    },
+    "course": {
+        "title": "Course Agent",
+        "greeting": "I can help with course learning.",
+        "model": "ft:LoRA/Qwen/Qwen2.5-7B-Instruct:olsujb67sl:tlp:kxywjlfohjnttnuobawy-ckpt_step_2",
+    },
+}
+
+
+def _validate_messages(messages: Optional[List[ChatMessage]], field_name: str) -> List[dict]:
+    if messages is None:
+        return []
+    cleaned: List[dict] = []
+    for idx, msg in enumerate(messages):
+        if not msg.role or not msg.content:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{field_name} item {idx + 1} missing role or content",
+            )
+        if not msg.content.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{field_name} item {idx + 1} has empty content",
+            )
+        cleaned.append({"role": msg.role.strip(), "content": msg.content.strip()})
+    return cleaned
+
+
+def _build_selected_hint(messages: List[dict], selected_messages: List[dict]) -> List[dict]:
+    if not selected_messages:
+        return messages
+
+    lines = []
+    for msg in selected_messages:
+        role_label = "User" if msg.get("role") == "user" else "AI"
+        lines.append(f"{role_label}: {msg.get('content', '')}")
+
+    if not lines:
+        return messages
+
+    hint = "Selected conversation context:\n" + "\n".join(lines)
+
+    if len(messages) <= 1:
+        return messages + [{"role": "system", "content": hint}]
+
+    merged = list(messages[:-1])
+    merged.append({"role": "system", "content": hint})
+    merged.append(messages[-1])
+    return merged
+
+
+def _attach_memory_prompt(messages: List[dict], memory_summary: Optional[str], agent_title: str) -> List[dict]:
+    system_parts = [f"You are {agent_title}."]
+    if memory_summary:
+        system_parts.append("User memory summary:\n" + memory_summary)
+    if system_parts:
+        return [{"role": "system", "content": "\n\n".join(system_parts)}] + messages
+    return messages
+
+
+def _get_conversation(db: Session, conversation_id: int, user_id: int, agent: str) -> Conversation:
+    convo = (
+        db.query(Conversation)
+        .filter(
+            Conversation.id == conversation_id,
+            Conversation.user_id == user_id,
+            Conversation.agent == agent,
+        )
+        .first()
+    )
+    if not convo:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+    return convo
+
+
+def _add_message(db: Session, conversation_id: int, role: str, content: str) -> Message:
+    message = Message(
+        conversation_id=conversation_id,
+        role=role,
+        content=content,
+        created_at=datetime.utcnow(),
+    )
+    db.add(message)
+    db.query(Conversation).filter(Conversation.id == conversation_id).update(
+        {Conversation.updated_at: datetime.utcnow()}
+    )
+    db.commit()
+    db.refresh(message)
+    return message
+
+
+@router.post("/api/agents/{agent}/chat")
+def chat(
+    payload: ChatRequest,
+    agent: str = Path(..., min_length=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    agent_config = AGENT_CONFIG.get(agent)
+    if not agent_config:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown agent")
+
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model not configured")
+
+    convo = _get_conversation(db, payload.conversation_id, current_user.id, agent)
+
+    messages = _validate_messages(payload.messages, "messages")
+    selected_messages = _validate_messages(payload.selected_messages, "selected_messages")
+    if not messages and payload.message:
+        messages = [{"role": "user", "content": payload.message.strip()}]
+
+    if not messages:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one message required")
+
+    if messages[-1]["role"] != "user":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Last message must be from user")
+
+    _add_message(db, convo.id, "user", messages[-1]["content"])
+
+    memory_summary = fetch_latest_memory_summary(db, current_user.id)
+    messages_with_hint = _build_selected_hint(messages, selected_messages)
+    messages_to_model = _attach_memory_prompt(
+        messages_with_hint, memory_summary, agent_config.get("title", agent)
+    )
+
+    def event_generator():
+        assistant_chunks: List[str] = []
+        assistant_message_id = None
+        with SessionLocal() as stream_db:
+            try:
+                for chunk in call_ai_model_stream(agent_config["model"], messages_to_model):
+                    if not chunk:
+                        continue
+                    assistant_chunks.append(chunk)
+                    full_text = "".join(assistant_chunks)
+                    if assistant_message_id is None:
+                        message = _add_message(stream_db, convo.id, "assistant", full_text)
+                        assistant_message_id = message.id
+                    else:
+                        stream_db.query(Message).filter(Message.id == assistant_message_id).update(
+                            {Message.content: full_text}
+                        )
+                        stream_db.query(Conversation).filter(Conversation.id == convo.id).update(
+                            {Conversation.updated_at: datetime.utcnow()}
+                        )
+                        stream_db.commit()
+                    yield f"data: {json.dumps({'content': chunk})}\n\n"
+            except Exception as exc:
+                logger.exception("Chat stream failed")
+                yield f"data: {json.dumps({'error': 'service unavailable'})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

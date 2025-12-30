@@ -1,0 +1,100 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
+    <title>任务型智能体</title>
+
+    <!-- 仅修改视觉背景，不改统一布局 -->
+    <style>
+        body.task-page {
+            background: radial-gradient(circle at 10% 20%, rgba(6,182,212,0.04), transparent 8%),
+                        linear-gradient(135deg, #061226 0%, #0b2546 50%, #08324a 100%);
+            background-attachment: fixed;
+            background-size: 200% 200%;
+            min-height: 100vh;
+        }
+        @keyframes task-bgShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        body.task-page { animation: task-bgShift 20s ease-in-out infinite; }
+        body.task-page::after {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: radial-gradient(60% 60% at 50% 80%, rgba(0,0,0,0.18), transparent 40%);
+            z-index: 0;
+        }
+        .container, .chat-section, .navbar, .footer { position: relative; z-index: 1; }
+    </style>
+</head>
+<body class="chat-page task-page">
+    <!-- 导航栏 -->
+    <nav class="navbar">
+        <div class="container">
+            <div class="dropdown">
+                <a href="#" class="logo">船舶与海洋智能体</a>
+                <div class="dropdown-content">
+                    <a href="{{ url_for('task') }}">任务型智能体</a>
+                    <a href="{{ url_for('course') }}">课程型智能体</a>
+                </div>
+            </div>
+            <div class="nav-links">
+                <a href="{{ url_for('index') }}">主页</a>
+                {% if current_user() %}
+                <span class="nav-item">你好，{{ current_user() }}</span>
+                <a href="{{ url_for('logout') }}">登出</a>
+                {% else %}
+                <a href="{{ url_for('login') }}">登录</a>
+                <a href="{{ url_for('register') }}">注册</a>
+                {% endif %}
+            </div>
+        </div>
+    </nav>
+
+    <!-- 对话页面内容 -->
+    <section class="chat-section">
+        <div class="container chat-wrapper">
+            <h1>任务型智能体</h1>
+            <div class="chat-panel">
+                <div class="chat-layout">
+                    <aside class="conversation-panel">
+                        <div class="conversation-header">
+                            <div class="conversation-title">会话列表</div>
+                            <button class="btn ghost" id="new-conv-btn">新建</button>
+                        </div>
+                    <div class="conversation-list" id="conversation-list"></div>
+                    <div class="conversation-status" id="conversation-status"></div>
+                </aside>
+                <div class="chat-main">
+                    <div class="select-toolbar">
+                        <label class="select-toggle">
+                            <input type="checkbox" id="select-mode-toggle">
+                            <span>勾选模式</span>
+                        </label>
+                        <button class="btn ghost" id="use-selected-btn" disabled>用勾选生成提示</button>
+                    </div>
+                    <div class="chat-container" id="chat-container"></div>
+                    <div class="chat-input">
+                        <input type="text" id="message-input" placeholder="输入你的消息">
+                        <button id="send-button" class="btn">发送</button>
+                    </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 页脚 -->
+    <footer class="footer">
+        <p>&copy; 2025 船舶与海洋智能体. 保留所有权利</p>
+    </footer>
+    <script src="{{ url_for('static', filename='chat-common.js') }}"></script>
+    <script src="{{ url_for('static', filename='task.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <title>注册 - 船舶与海洋智能体</title>
+</head>
+<body class="auth-page">
+    <nav class="navbar">
+        <div class="container">
+            <div class="dropdown">
+                <a href="{{ url_for('index') }}" class="logo">船舶与海洋智能体</a>
+                <div class="dropdown-content">
+                    <a href="{{ url_for('task') }}">任务型智能体</a>
+                    <a href="{{ url_for('course') }}">课程型智能体</a>
+                </div>
+            </div>
+            <div class="nav-links">
+                <a href="{{ url_for('index') }}">主页</a>
+                <a href="{{ url_for('login') }}">登录</a>
+            </div>
+        </div>
+    </nav>
+
+    <section class="auth-section">
+        <div class="auth-card">
+            <h1>用户注册</h1>
+            <p>创建新账户，开始体验船舶与海洋智能体。</p>
+            {% if error %}
+            <div class="auth-error">{{ error }}</div>
+            {% endif %}
+            <form method="post" action="{{ url_for('register') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="auth-field">
+                    <label for="username">用户名</label>
+                    <input class="auth-input" type="text" id="username" name="username" value="{{ username or '' }}" required>
+                </div>
+                <div class="auth-field">
+                    <label for="password">密码</label>
+                    <input class="auth-input" type="password" id="password" name="password" required>
+                </div>
+                <div class="auth-field">
+                    <label for="confirm">确认密码</label>
+                    <input class="auth-input" type="password" id="confirm" name="confirm" required>
+                </div>
+                <div class="auth-actions">
+                    <button type="submit" class="btn">注册</button>
+                    <a class="auth-link" href="{{ url_for('login') }}">已有账户？去登录</a>
+                </div>
+            </form>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <p>&copy; 2025 船舶与海洋智能体. 保留所有权利</p>
+    </footer>
+</body>
+</html>
