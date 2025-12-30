@@ -1,7 +1,6 @@
 import json
 import logging
 from datetime import datetime
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from fastapi.responses import StreamingResponse
@@ -53,10 +52,10 @@ AGENT_CONFIG = {
 }
 
 
-def _validate_messages(messages: Optional[List[ChatMessage]], field_name: str) -> List[dict]:
+def _validate_messages(messages: list[ChatMessage] | None, field_name: str) -> list[dict]:
     if messages is None:
         return []
-    cleaned: List[dict] = []
+    cleaned: list[dict] = []
     for idx, msg in enumerate(messages):
         if not msg.role or not msg.content:
             raise HTTPException(
@@ -72,7 +71,7 @@ def _validate_messages(messages: Optional[List[ChatMessage]], field_name: str) -
     return cleaned
 
 
-def _build_selected_hint(messages: List[dict], selected_messages: List[dict]) -> List[dict]:
+def _build_selected_hint(messages: list[dict], selected_messages: list[dict]) -> list[dict]:
     if not selected_messages:
         return messages
 
@@ -95,7 +94,7 @@ def _build_selected_hint(messages: List[dict], selected_messages: List[dict]) ->
     return merged
 
 
-def _attach_memory_prompt(messages: List[dict], memory_summary: Optional[str], agent_title: str) -> List[dict]:
+def _attach_memory_prompt(messages: list[dict], memory_summary: str | None, agent_title: str) -> list[dict]:
     system_parts = [f"You are {agent_title}."]
     if memory_summary:
         system_parts.append("User memory summary:\n" + memory_summary)
@@ -171,7 +170,7 @@ def chat(
     )
 
     def event_generator():
-        assistant_chunks: List[str] = []
+        assistant_chunks: list[str] = []
         assistant_message_id = None
         with SessionLocal() as stream_db:
             try:
@@ -192,7 +191,7 @@ def chat(
                         )
                         stream_db.commit()
                     yield f"data: {json.dumps({'content': chunk})}\n\n"
-            except Exception as exc:
+            except Exception:
                 logger.exception("Chat stream failed")
                 yield f"data: {json.dumps({'error': 'service unavailable'})}\n\n"
 

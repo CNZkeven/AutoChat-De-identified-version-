@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Iterable, List
+from collections.abc import Iterable
 
 from openai import OpenAI
 
@@ -9,7 +9,7 @@ from ..config import OPENAI_API_KEY, OPENAI_BASE_URL
 logger = logging.getLogger(__name__)
 
 
-def call_ai_model_stream(model_name: str, messages: List[dict]) -> Iterable[str]:
+def call_ai_model_stream(model_name: str, messages: list[dict]) -> Iterable[str]:
     if not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY is not configured")
 

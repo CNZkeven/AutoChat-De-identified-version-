@@ -4,3 +4,7 @@
 .serena/
 __pycache__/
 *.pyc
+node_modules/
+.ruff_cache/
+.pytest_cache/
+npm-debug.log*

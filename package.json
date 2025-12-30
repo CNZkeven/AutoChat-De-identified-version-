@@ -1,0 +1,12 @@
+{
+  "name": "autochat",
+  "private": true,
+  "version": "0.1.0",
+  "devDependencies": {
+    "eslint": "^8.57.0"
+  },
+  "scripts": {
+    "lint:frontend": "eslint \"frontend/**/*.js\"",
+    "build:frontend": "node scripts/verify-frontend.js"
+  }
+}

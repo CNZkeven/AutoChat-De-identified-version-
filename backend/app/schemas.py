@@ -1,5 +1,3 @@
-from typing import List, Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -23,7 +21,7 @@ class TokenResponse(BaseModel):
 
 
 class ConversationCreate(BaseModel):
-    title: Optional[str] = None
+    title: str | None = None
 
 
 class ConversationUpdate(BaseModel):
@@ -36,8 +34,8 @@ class ConversationOut(BaseModel):
     title: str
     agent: str
     status: str
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
     class Config:
         from_attributes = True
@@ -48,7 +46,7 @@ class MessageOut(BaseModel):
     conversation_id: int
     role: str
     content: str
-    created_at: Optional[str] = None
+    created_at: str | None = None
 
     class Config:
         from_attributes = True
@@ -61,6 +59,6 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     conversation_id: int
-    message: Optional[str] = None
-    messages: Optional[List[ChatMessage]] = None
-    selected_messages: Optional[List[ChatMessage]] = None
+    message: str | None = None
+    messages: list[ChatMessage] | None = None
+    selected_messages: list[ChatMessage] | None = None
