@@ -12,7 +12,7 @@ from ..deps import get_current_user
 from ..models import Conversation, Message, User
 from ..schemas import ChatMessage, ChatRequest
 from ..services.ai import call_ai_model_stream
-from ..services.memory import fetch_latest_memory_summary
+from ..services.memory import fetch_latest_memory_summary, generate_memory_summary
 
 logger = logging.getLogger(__name__)
 
@@ -163,15 +163,20 @@ def chat(
 
     _add_message(db, convo.id, "user", messages[-1]["content"])
 
-    memory_summary = fetch_latest_memory_summary(db, current_user.id)
+    memory_summary = fetch_latest_memory_summary(db, current_user.id, agent)
     messages_with_hint = _build_selected_hint(messages, selected_messages)
     messages_to_model = _attach_memory_prompt(
         messages_with_hint, memory_summary, agent_config.get("title", agent)
     )
 
+    # Capture user_id and agent for use in generator
+    user_id = current_user.id
+    agent_type = agent
+
     def event_generator():
         assistant_chunks: list[str] = []
         assistant_message_id = None
+        stream_completed = False
         with SessionLocal() as stream_db:
             try:
                 for chunk in call_ai_model_stream(agent_config["model"], messages_to_model):
@@ -191,8 +196,16 @@ def chat(
                         )
                         stream_db.commit()
                     yield f"data: {json.dumps({'content': chunk})}\n\n"
+                stream_completed = True
             except Exception:
                 logger.exception("Chat stream failed")
                 yield f"data: {json.dumps({'error': 'service unavailable'})}\n\n"
+
+            # Trigger memory summarization after successful completion
+            if stream_completed:
+                try:
+                    generate_memory_summary(stream_db, user_id, agent_type)
+                except Exception:
+                    logger.exception("Memory summarization failed (non-blocking)")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

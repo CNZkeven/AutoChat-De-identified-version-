@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import CORS_ORIGINS
 from .db import Base, engine
-from .routers import auth, chat, conversations
+from .routers import auth, chat, conversations, export, memory
 
 logging.basicConfig(level=logging.INFO)
 
@@ -27,6 +27,8 @@ def on_startup() -> None:
 app.include_router(auth.router)
 app.include_router(conversations.router)
 app.include_router(chat.router)
+app.include_router(memory.router)
+app.include_router(export.router)
 
 
 @app.get("/health")
