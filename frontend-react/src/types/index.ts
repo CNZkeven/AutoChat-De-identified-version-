@@ -1,6 +1,13 @@
 // Agent types
 export type AgentType = 'ideological' | 'evaluation' | 'task' | 'exploration' | 'competition' | 'course';
 
+export interface AgentStyleOption {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+}
+
 export interface AgentConfig {
   type: AgentType;
   title: string;
@@ -11,6 +18,7 @@ export interface AgentConfig {
   colorLight: string;
   backgroundImage: string;
   greeting: string;
+  styles: AgentStyleOption[];
 }
 
 // User and Auth types
@@ -83,8 +91,8 @@ export interface ApiError {
 
 // Chat request types
 export interface ChatRequest {
-  conversation_id: number;
+  conversation_id: number | null;
   message?: string;
-  messages?: { role: string; content: string }[];
-  selected_messages?: { role: string; content: string }[];
+  messages?: { role: 'system' | 'user' | 'assistant'; content: string }[];
+  selected_messages?: { role: 'user' | 'assistant'; content: string }[];
 }

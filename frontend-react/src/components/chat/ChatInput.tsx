@@ -1,7 +1,9 @@
-import { useState, useRef, useEffect } from 'react';
+import { useRef, useEffect } from 'react';
 import { Send, Square, Loader2 } from 'lucide-react';
 
 interface ChatInputProps {
+  value: string;
+  onChange: (value: string) => void;
   onSend: (message: string) => void;
   onStop?: () => void;
   isStreaming?: boolean;
@@ -11,6 +13,8 @@ interface ChatInputProps {
 }
 
 export function ChatInput({
+  value,
+  onChange,
   onSend,
   onStop,
   isStreaming,
@@ -18,7 +22,6 @@ export function ChatInput({
   placeholder = '输入消息...',
   agentColor,
 }: ChatInputProps) {
-  const [message, setMessage] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto-resize textarea
@@ -28,13 +31,13 @@ export function ChatInput({
       textarea.style.height = 'auto';
       textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
     }
-  }, [message]);
+  }, [value]);
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (message.trim() && !isStreaming && !disabled) {
-      onSend(message.trim());
-      setMessage('');
+    if (value.trim() && !isStreaming && !disabled) {
+      onSend(value.trim());
+      onChange('');
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
       }
@@ -54,8 +57,8 @@ export function ChatInput({
         <div className="flex-1 relative">
           <textarea
             ref={textareaRef}
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             disabled={disabled || isStreaming}
@@ -80,7 +83,7 @@ export function ChatInput({
         ) : (
           <button
             type="submit"
-            disabled={!message.trim() || disabled}
+            disabled={!value.trim() || disabled}
             className="flex-shrink-0 p-3 rounded-xl text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
             style={{
               backgroundColor: agentColor || '#4A90E2',

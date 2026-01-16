@@ -13,6 +13,7 @@ from ..models import Conversation, Message, User
 from ..schemas import ChatMessage, ChatRequest
 from ..services.ai import call_ai_model_stream
 from ..services.memory import fetch_latest_memory_summary, generate_memory_summary
+from ..services.title import generate_conversation_title
 
 logger = logging.getLogger(__name__)
 
@@ -20,28 +21,28 @@ router = APIRouter(tags=["chat"])
 
 AGENT_CONFIG = {
     "ideological": {
-        "title": "Ideological Agent",
-        "greeting": "I can help with ideological topics.",
+        "title": "思政智能体",
+        "greeting": "我可以帮助你讨论思想政治相关话题。",
     },
     "evaluation": {
-        "title": "Evaluation Agent",
-        "greeting": "I can help with evaluations.",
+        "title": "评价智能体",
+        "greeting": "我可以帮助你进行学习评价与反馈。",
     },
     "task": {
-        "title": "Task Agent",
-        "greeting": "I can help with task guidance.",
+        "title": "任务智能体",
+        "greeting": "我可以帮助你进行任务规划与执行。",
     },
     "exploration": {
-        "title": "Exploration Agent",
-        "greeting": "I can help with exploration and research.",
+        "title": "探究智能体",
+        "greeting": "我可以帮助你进行探究式学习与研究。",
     },
     "competition": {
-        "title": "Competition Agent",
-        "greeting": "I can help with competition preparation.",
+        "title": "竞赛智能体",
+        "greeting": "我可以帮助你准备各类学科竞赛。",
     },
     "course": {
-        "title": "Course Agent",
-        "greeting": "I can help with course learning.",
+        "title": "课程智能体",
+        "greeting": "我可以帮助你学习课程内容。",
     },
 }
 
@@ -71,13 +72,13 @@ def _build_selected_hint(messages: list[dict], selected_messages: list[dict]) ->
 
     lines = []
     for msg in selected_messages:
-        role_label = "User" if msg.get("role") == "user" else "AI"
+        role_label = "用户" if msg.get("role") == "user" else "智能体"
         lines.append(f"{role_label}: {msg.get('content', '')}")
 
     if not lines:
         return messages
 
-    hint = "Selected conversation context:\n" + "\n".join(lines)
+    hint = "选中对话内容：\n" + "\n".join(lines)
 
     if len(messages) <= 1:
         return messages + [{"role": "system", "content": hint}]
@@ -89,9 +90,9 @@ def _build_selected_hint(messages: list[dict], selected_messages: list[dict]) ->
 
 
 def _attach_memory_prompt(messages: list[dict], memory_summary: str | None, agent_title: str) -> list[dict]:
-    system_parts = [f"You are {agent_title}."]
+    system_parts = [f"你是{agent_title}。"]
     if memory_summary:
-        system_parts.append("User memory summary:\n" + memory_summary)
+        system_parts.append("用户记忆摘要：\n" + memory_summary)
     if system_parts:
         return [{"role": "system", "content": "\n\n".join(system_parts)}] + messages
     return messages
@@ -142,7 +143,7 @@ def chat(
     api_key, base_url = get_agent_credentials(agent)
     model_name = get_agent_model(agent)
     if not api_key or not base_url or not model_name:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model not configured")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="模型未配置")
 
     messages = _validate_messages(payload.messages, "messages")
     selected_messages = _validate_messages(payload.selected_messages, "selected_messages")
@@ -221,5 +222,10 @@ def chat(
                     generate_memory_summary(stream_db, current_user.id, agent)
                 except Exception:
                     logger.exception("Memory summarization failed (non-blocking)")
+
+                try:
+                    generate_conversation_title(stream_db, convo.id)
+                except Exception:
+                    logger.exception("Conversation title generation failed (non-blocking)")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

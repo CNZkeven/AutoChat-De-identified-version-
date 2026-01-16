@@ -6,10 +6,15 @@ import type { Message, AgentType } from '../types';
 interface UseChatOptions {
   agent: AgentType;
   conversationId: number | null;
+  isGuest?: boolean;
   onMessageSent?: () => void;
 }
 
-export function useChat({ agent, conversationId, onMessageSent }: UseChatOptions) {
+interface SendMessageOptions {
+  systemPrompt?: string;
+}
+
+export function useChat({ agent, conversationId, isGuest = false, onMessageSent }: UseChatOptions) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -18,7 +23,7 @@ export function useChat({ agent, conversationId, onMessageSent }: UseChatOptions
 
   // Load messages for a conversation
   const loadMessages = useCallback(async () => {
-    if (!conversationId) {
+    if (!conversationId || isGuest) {
       setMessages([]);
       return;
     }
@@ -34,8 +39,8 @@ export function useChat({ agent, conversationId, onMessageSent }: UseChatOptions
 
   // Send a message
   const sendMessage = useCallback(
-    async (content: string, selectedMessages?: Message[]) => {
-      if (!conversationId || isStreaming || !content.trim()) return;
+    async (content: string, selectedMessages?: Message[], options?: SendMessageOptions) => {
+      if ((!conversationId && !isGuest) || isStreaming || !content.trim()) return;
 
       const userMessage: Message = {
         id: Date.now(),
@@ -65,14 +70,19 @@ export function useChat({ agent, conversationId, onMessageSent }: UseChatOptions
       abortRef.current = new AbortController();
 
       try {
+        const payloadMessages = [...messages, userMessage].map((m) => ({
+          role: m.role,
+          content: m.content,
+        }));
+        const finalMessages = options?.systemPrompt
+          ? [{ role: 'system', content: options.systemPrompt }, ...payloadMessages]
+          : payloadMessages;
+
         await fetchSSE(`/api/agents/${agent}/chat`, {
           method: 'POST',
           body: {
             conversation_id: conversationId,
-            messages: [...messages, userMessage].map((m) => ({
-              role: m.role,
-              content: m.content,
-            })),
+            messages: finalMessages,
             selected_messages: selectedMessages?.map((m) => ({
               role: m.role,
               content: m.content,
@@ -106,7 +116,7 @@ export function useChat({ agent, conversationId, onMessageSent }: UseChatOptions
         abortRef.current = null;
       }
     },
-    [agent, conversationId, messages, isStreaming, onMessageSent]
+    [agent, conversationId, messages, isStreaming, onMessageSent, isGuest]
   );
 
   // Stop generation

@@ -16,6 +16,8 @@ interface ChatContainerProps {
   selectedMessages?: Set<number>;
   selectionMode?: boolean;
   onToggleSelection?: (messageId: number) => void;
+  draftMessage: string;
+  onDraftChange: (value: string) => void;
 }
 
 export function ChatContainer({
@@ -30,6 +32,8 @@ export function ChatContainer({
   selectedMessages = new Set(),
   selectionMode = false,
   onToggleSelection,
+  draftMessage,
+  onDraftChange,
 }: ChatContainerProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -131,6 +135,8 @@ export function ChatContainer({
         disabled={disabled}
         agentColor={agentColor}
         placeholder={disabled ? '请先选择或创建对话' : '输入消息...'}
+        value={draftMessage}
+        onChange={onDraftChange}
       />
     </div>
   );

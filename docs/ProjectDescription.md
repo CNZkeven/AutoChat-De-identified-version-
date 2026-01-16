@@ -2,10 +2,23 @@
 
 ## Overview
 AutoChat provides a FastAPI backend with multiple agent chat endpoints and a static frontend for interacting with those agents.
+React frontend can be started via `scripts/start_react.sh`.
+
+## React Frontend Notes
+- Uses Vite dev server. `VITE_API_URL` points to backend.
+- `VITE_ALLOW_GUEST=false` disables guest access.
 
 ## Authentication
 - Authenticated users get saved conversations and memory summaries.
 - Guest mode allows chat without login; guest conversations are not stored in the database or memory.
+
+## Conversation Titles
+- Default title is “新对话”.
+- After the first assistant reply, titles are auto-generated in Chinese when still using the default.
+
+## Agent Styles
+- Each agent exposes two selectable styles in the React UI.
+- The style prompt is injected only on the first message or after a style switch.
 
 ## Demo Account
 - Username: demo

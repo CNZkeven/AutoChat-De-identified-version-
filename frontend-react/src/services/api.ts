@@ -66,7 +66,14 @@ export async function fetchSSE(
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      let detail = '';
+      try {
+        const data = await response.json();
+        detail = (data as { detail?: string; error?: string })?.detail || (data as { error?: string })?.error || '';
+      } catch {
+        // ignore parse errors
+      }
+      throw new Error(detail || `HTTP error! status: ${response.status}`);
     }
 
     const reader = response.body?.getReader();

@@ -50,7 +50,7 @@ def create_conversation(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    title = (payload.title or "New conversation").strip() or "New conversation"
+    title = (payload.title or "新对话").strip() or "新对话"
     convo = Conversation(
         user_id=current_user.id,
         title=title,
@@ -74,7 +74,7 @@ def update_conversation(
     current_user: User = Depends(get_current_user),
 ):
     convo = _get_conversation(db, conversation_id, current_user.id, agent)
-    convo.title = payload.title.strip() or "New conversation"
+    convo.title = payload.title.strip() or "新对话"
     convo.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(convo)
