@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from ..config import get_agent_credentials
+from ..config import get_agent_credentials, get_agent_model
 from ..db import SessionLocal, get_db
 from ..deps import get_optional_user
 from ..models import Conversation, Message, User
@@ -22,32 +22,26 @@ AGENT_CONFIG = {
     "ideological": {
         "title": "Ideological Agent",
         "greeting": "I can help with ideological topics.",
-        "model": "ft:LoRA/Qwen/Qwen2.5-7B-Instruct:olsujb67sl:tlp:kxywjlfohjnttnuobawy-ckpt_step_2",
     },
     "evaluation": {
         "title": "Evaluation Agent",
         "greeting": "I can help with evaluations.",
-        "model": "ft:LoRA/Qwen/Qwen2.5-7B-Instruct:olsujb67sl:tlp:kxywjlfohjnttnuobawy-ckpt_step_2",
     },
     "task": {
         "title": "Task Agent",
         "greeting": "I can help with task guidance.",
-        "model": "ft:LoRA/Qwen/Qwen2.5-7B-Instruct:olsujb67sl:tlp:kxywjlfohjnttnuobawy-ckpt_step_2",
     },
     "exploration": {
         "title": "Exploration Agent",
         "greeting": "I can help with exploration and research.",
-        "model": "ft:LoRA/Qwen/Qwen2.5-7B-Instruct:olsujb67sl:tlp:kxywjlfohjnttnuobawy-ckpt_step_2",
     },
     "competition": {
         "title": "Competition Agent",
         "greeting": "I can help with competition preparation.",
-        "model": "ft:LoRA/Qwen/Qwen2.5-7B-Instruct:olsujb67sl:tlp:kxywjlfohjnttnuobawy-ckpt_step_2",
     },
     "course": {
         "title": "Course Agent",
         "greeting": "I can help with course learning.",
-        "model": "ft:LoRA/Qwen/Qwen2.5-7B-Instruct:olsujb67sl:tlp:kxywjlfohjnttnuobawy-ckpt_step_2",
     },
 }
 
@@ -146,7 +140,8 @@ def chat(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown agent")
 
     api_key, base_url = get_agent_credentials(agent)
-    if not api_key or not base_url:
+    model_name = get_agent_model(agent)
+    if not api_key or not base_url or not model_name:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model not configured")
 
     messages = _validate_messages(payload.messages, "messages")
@@ -181,7 +176,7 @@ def chat(
         if is_guest:
             try:
                 for chunk in call_ai_model_stream(
-                    agent_config["model"], messages_to_model, api_key=api_key, base_url=base_url
+                    model_name, messages_to_model, api_key=api_key, base_url=base_url
                 ):
                     if not chunk:
                         continue
@@ -197,7 +192,7 @@ def chat(
         with SessionLocal() as stream_db:
             try:
                 for chunk in call_ai_model_stream(
-                    agent_config["model"], messages_to_model, api_key=api_key, base_url=base_url
+                    model_name, messages_to_model, api_key=api_key, base_url=base_url
                 ):
                     if not chunk:
                         continue

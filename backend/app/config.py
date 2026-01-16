@@ -22,6 +22,7 @@ AGENT_ENV_PREFIXES = {
 
 SUMMARY_API_KEY = os.environ.get("SUMMARY_API_KEY", "")
 SUMMARY_BASE_URL = os.environ.get("SUMMARY_BASE_URL", "")
+SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "")
 
 
 def get_agent_credentials(agent: str) -> tuple[str, str]:
@@ -32,6 +33,13 @@ def get_agent_credentials(agent: str) -> tuple[str, str]:
         os.environ.get(f"{prefix}_API_KEY", ""),
         os.environ.get(f"{prefix}_BASE_URL", ""),
     )
+
+
+def get_agent_model(agent: str) -> str:
+    prefix = AGENT_ENV_PREFIXES.get(agent)
+    if not prefix:
+        return ""
+    return os.environ.get(f"{prefix}_MODEL", "")
 
 CORS_ORIGINS = [
     origin.strip()

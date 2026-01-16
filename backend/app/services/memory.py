@@ -6,14 +6,13 @@ from openai import OpenAI
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..config import SUMMARY_API_KEY, SUMMARY_BASE_URL
+from ..config import SUMMARY_API_KEY, SUMMARY_BASE_URL, SUMMARY_MODEL
 from ..models import Conversation, MemorySummary, Message
 
 logger = logging.getLogger(__name__)
 
 # Configuration
 SUMMARIZATION_THRESHOLD = 20  # Trigger summarization after 20 new messages
-SUMMARIZATION_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # Use base model for summarization
 MAX_MESSAGES_FOR_SUMMARY = 100  # Maximum messages to include in summarization
 
 SUMMARIZATION_PROMPT = """你是一个对话记忆助手。请分析以下用户与AI智能体的对话历史，并创建一份简洁的记忆摘要。
@@ -71,7 +70,7 @@ def count_user_agent_messages(db: Session, user_id: int, agent: str) -> int:
 
 def _call_summarization_api(conversation_text: str) -> str | None:
     """Call LLM to generate memory summary."""
-    if not SUMMARY_API_KEY or not SUMMARY_BASE_URL:
+    if not SUMMARY_API_KEY or not SUMMARY_BASE_URL or not SUMMARY_MODEL:
         logger.warning("Summary API not configured, skipping summarization")
         return None
 
@@ -80,7 +79,7 @@ def _call_summarization_api(conversation_text: str) -> str | None:
         prompt = SUMMARIZATION_PROMPT.format(conversation_history=conversation_text)
 
         response = client.chat.completions.create(
-            model=SUMMARIZATION_MODEL,
+            model=SUMMARY_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=1024,
             temperature=0.3,  # Lower temperature for more consistent summaries
