@@ -29,14 +29,6 @@ export function ChatPage() {
   // Validate agent type
   const agentConfig = agent ? getAgentConfig(agent) : undefined;
   const agentType = agentConfig?.type;
-  const conversationKey = useMemo(() => {
-    if (!agentType) return '';
-    return `${agentType}:${isGuest ? 'guest' : currentConversationId ?? 'none'}`;
-  }, [agentType, currentConversationId, isGuest]);
-  const styleOptions = agentConfig?.styles || [];
-  const defaultStyleId = styleOptions[0]?.id;
-  const selectedStyleId = conversationKey ? styleByConversation[conversationKey] || defaultStyleId : defaultStyleId;
-  const selectedStyle = styleOptions.find((style) => style.id === selectedStyleId);
 
   // State
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -49,6 +41,15 @@ export function ChatPage() {
 
   const [styleByConversation, setStyleByConversation] = useState<Record<string, string>>({});
   const [lastAppliedStyleByConversation, setLastAppliedStyleByConversation] = useState<Record<string, string>>({});
+
+  const conversationKey = useMemo(() => {
+    if (!agentType) return '';
+    return `${agentType}:${isGuest ? 'guest' : currentConversationId ?? 'none'}`;
+  }, [agentType, currentConversationId, isGuest]);
+  const styleOptions = agentConfig?.styles || [];
+  const defaultStyleId = styleOptions[0]?.id;
+  const selectedStyleId = conversationKey ? styleByConversation[conversationKey] || defaultStyleId : defaultStyleId;
+  const selectedStyle = styleOptions.find((style) => style.id === selectedStyleId);
 
   // Memory state
   const [memory, setMemory] = useState<{ summary: string | null; message_count: number } | null>(null);
