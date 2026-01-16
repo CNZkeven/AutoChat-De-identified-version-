@@ -6,7 +6,7 @@ from openai import OpenAI
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..config import OPENAI_API_KEY, OPENAI_BASE_URL
+from ..config import SUMMARY_API_KEY, SUMMARY_BASE_URL
 from ..models import Conversation, MemorySummary, Message
 
 logger = logging.getLogger(__name__)
@@ -71,12 +71,12 @@ def count_user_agent_messages(db: Session, user_id: int, agent: str) -> int:
 
 def _call_summarization_api(conversation_text: str) -> str | None:
     """Call LLM to generate memory summary."""
-    if not OPENAI_API_KEY:
-        logger.warning("OPENAI_API_KEY not configured, skipping summarization")
+    if not SUMMARY_API_KEY or not SUMMARY_BASE_URL:
+        logger.warning("Summary API not configured, skipping summarization")
         return None
 
     try:
-        client = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL)
+        client = OpenAI(api_key=SUMMARY_API_KEY, base_url=SUMMARY_BASE_URL)
         prompt = SUMMARIZATION_PROMPT.format(conversation_history=conversation_text)
 
         response = client.chat.completions.create(

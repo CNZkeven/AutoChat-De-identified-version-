@@ -8,3 +8,8 @@ node_modules/
 .ruff_cache/
 .pytest_cache/
 npm-debug.log*
+
+AGENTS.md
+CLAUDE.md
+
+backend/.env

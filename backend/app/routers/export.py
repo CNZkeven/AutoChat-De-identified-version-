@@ -2,7 +2,7 @@
 
 import io
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi.responses import StreamingResponse
@@ -151,7 +151,7 @@ def create_share_link(
 
     # Create share link
     share_token = secrets.token_urlsafe(32)
-    expires_at = datetime.now(timezone.utc) + timedelta(days=payload.expires_days)
+    expires_at = datetime.now(datetime.UTC) + timedelta(days=payload.expires_days)
 
     share_link = ShareLink(
         conversation_id=conversation_id,
@@ -188,7 +188,7 @@ def get_shared_conversation(
         )
 
     # Check expiration
-    if share.expires_at and share.expires_at < datetime.now(timezone.utc):
+    if share.expires_at and share.expires_at < datetime.now(datetime.UTC):
         raise HTTPException(
             status_code=status.HTTP_410_GONE, detail="Share link has expired"
         )

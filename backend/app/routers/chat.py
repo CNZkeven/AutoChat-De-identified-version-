@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from ..config import OPENAI_API_KEY
+from ..config import get_agent_credentials
 from ..db import SessionLocal, get_db
-from ..deps import get_current_user
+from ..deps import get_optional_user
 from ..models import Conversation, Message, User
 from ..schemas import ChatMessage, ChatRequest
 from ..services.ai import call_ai_model_stream
@@ -139,16 +139,15 @@ def chat(
     payload: ChatRequest,
     agent: str = Path(..., min_length=1),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_user),
 ):
     agent_config = AGENT_CONFIG.get(agent)
     if not agent_config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown agent")
 
-    if not OPENAI_API_KEY:
+    api_key, base_url = get_agent_credentials(agent)
+    if not api_key or not base_url:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model not configured")
-
-    convo = _get_conversation(db, payload.conversation_id, current_user.id, agent)
 
     messages = _validate_messages(payload.messages, "messages")
     selected_messages = _validate_messages(payload.selected_messages, "selected_messages")
@@ -161,25 +160,45 @@ def chat(
     if messages[-1]["role"] != "user":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Last message must be from user")
 
-    _add_message(db, convo.id, "user", messages[-1]["content"])
+    is_guest = current_user is None
+    if not is_guest and payload.conversation_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="conversation_id is required")
 
-    memory_summary = fetch_latest_memory_summary(db, current_user.id, agent)
+    if not is_guest:
+        convo = _get_conversation(db, payload.conversation_id, current_user.id, agent)
+        _add_message(db, convo.id, "user", messages[-1]["content"])
+        memory_summary = fetch_latest_memory_summary(db, current_user.id, agent)
+    else:
+        convo = None
+        memory_summary = None
     messages_with_hint = _build_selected_hint(messages, selected_messages)
     messages_to_model = _attach_memory_prompt(
         messages_with_hint, memory_summary, agent_config.get("title", agent)
     )
 
-    # Capture user_id and agent for use in generator
-    user_id = current_user.id
-    agent_type = agent
-
     def event_generator():
         assistant_chunks: list[str] = []
+        if is_guest:
+            try:
+                for chunk in call_ai_model_stream(
+                    agent_config["model"], messages_to_model, api_key=api_key, base_url=base_url
+                ):
+                    if not chunk:
+                        continue
+                    assistant_chunks.append(chunk)
+                    yield f"data: {json.dumps({'content': chunk})}\n\n"
+            except Exception:
+                logger.exception("Guest chat stream failed")
+                yield f"data: {json.dumps({'error': 'service unavailable'})}\n\n"
+            return
+
         assistant_message_id = None
         stream_completed = False
         with SessionLocal() as stream_db:
             try:
-                for chunk in call_ai_model_stream(agent_config["model"], messages_to_model):
+                for chunk in call_ai_model_stream(
+                    agent_config["model"], messages_to_model, api_key=api_key, base_url=base_url
+                ):
                     if not chunk:
                         continue
                     assistant_chunks.append(chunk)
@@ -204,7 +223,7 @@ def chat(
             # Trigger memory summarization after successful completion
             if stream_completed:
                 try:
-                    generate_memory_summary(stream_db, user_id, agent_type)
+                    generate_memory_summary(stream_db, current_user.id, agent)
                 except Exception:
                     logger.exception("Memory summarization failed (non-blocking)")
 

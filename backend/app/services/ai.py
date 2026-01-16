@@ -4,16 +4,21 @@ from collections.abc import Iterable
 
 from openai import OpenAI
 
-from ..config import OPENAI_API_KEY, OPENAI_BASE_URL
-
 logger = logging.getLogger(__name__)
 
 
-def call_ai_model_stream(model_name: str, messages: list[dict]) -> Iterable[str]:
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not configured")
+def call_ai_model_stream(
+    model_name: str,
+    messages: list[dict],
+    api_key: str,
+    base_url: str,
+) -> Iterable[str]:
+    if not api_key:
+        raise RuntimeError("Agent API key is not configured")
+    if not base_url:
+        raise RuntimeError("Agent base URL is not configured")
 
-    client = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL)
+    client = OpenAI(api_key=api_key, base_url=base_url)
     response = client.chat.completions.create(
         model=model_name,
         messages=messages,

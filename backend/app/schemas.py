@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -34,8 +36,8 @@ class ConversationOut(BaseModel):
     title: str
     agent: str
     status: str
-    created_at: str | None = None
-    updated_at: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     class Config:
         from_attributes = True
@@ -46,7 +48,7 @@ class MessageOut(BaseModel):
     conversation_id: int
     role: str
     content: str
-    created_at: str | None = None
+    created_at: datetime | None = None
 
     class Config:
         from_attributes = True
@@ -58,7 +60,7 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    conversation_id: int
+    conversation_id: int | None = None
     message: str | None = None
     messages: list[ChatMessage] | None = None
     selected_messages: list[ChatMessage] | None = None

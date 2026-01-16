@@ -24,7 +24,11 @@
             return;
         }
 
-        if (!window.Auth.requireAuth()) {
+        const allowGuest = window.APP_CONFIG.ALLOW_GUEST !== false;
+        const hasToken = Boolean(window.Auth.getToken());
+        const isGuest = !hasToken;
+        if (isGuest && !allowGuest) {
+            window.location.href = 'login.html';
             return;
         }
 
@@ -49,7 +53,7 @@
         let messagesState = [];
         let selectedRange = null;
         let isSelectMode = false;
-        let currentConversationId = null;
+        let currentConversationId = isGuest ? 0 : null;
         let conversations = [];
 
         const apiBase = window.APP_CONFIG.API_BASE_URL;
@@ -60,7 +64,12 @@
         const messagesUrl = (id) => `${conversationBase}/${id}/messages?${agentParam}`;
         const selectionKey = (convId) => `${storageKey}_selected_range_${convId}`;
 
-        newConvBtn.addEventListener('click', handleCreateConversation);
+        if (newConvBtn) {
+            newConvBtn.addEventListener('click', handleCreateConversation);
+            if (isGuest) {
+                newConvBtn.style.display = 'none';
+            }
+        }
         sendButton.addEventListener('click', sendMessage);
         messageInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && !isGenerating) sendMessage();
@@ -75,10 +84,19 @@
             useSelectedBtn.addEventListener('click', handleUseSelectedPrompt);
         }
 
-        bootstrap().catch((e) => {
-            console.error(e);
-            setStatus('Initialization failed', true);
-        });
+        if (conversationList && isGuest) {
+            conversationList.style.display = 'none';
+        }
+
+        if (isGuest) {
+            if (greeting) renderGreeting(greeting);
+            setStatus('Guest mode: conversations are not saved.');
+        } else {
+            bootstrap().catch((e) => {
+                console.error(e);
+                setStatus('Initialization failed', true);
+            });
+        }
 
         async function bootstrap() {
             await loadConversations();
@@ -96,6 +114,7 @@
         }
 
         async function loadConversations() {
+            if (isGuest) return;
             setStatus('Loading conversations...');
             const data = await fetchJson(listUrl);
             conversations = data || [];
@@ -150,6 +169,7 @@
         }
 
         async function handleCreateConversation() {
+            if (isGuest) return;
             try {
                 setStatus('Creating conversation...');
                 const created = await fetchJson(listUrl, {
@@ -167,6 +187,7 @@
         }
 
         async function handleRename(id) {
+            if (isGuest) return;
             const name = window.prompt('Enter a new conversation title');
             if (name === null) return;
             const title = name.trim() || 'New conversation';
@@ -185,6 +206,7 @@
         }
 
         async function handleDelete(id) {
+            if (isGuest) return;
             const ok = window.confirm('Delete this conversation?');
             if (!ok) return;
             try {
@@ -207,12 +229,18 @@
         async function selectConversation(id) {
             if (!id) return;
             currentConversationId = id;
-            window.localStorage.setItem(storageKey, String(id));
+            if (!isGuest) {
+                window.localStorage.setItem(storageKey, String(id));
+            }
             renderConversationList();
             await loadMessages(id);
         }
 
         async function loadMessages(id) {
+            if (isGuest) {
+                setStatus('');
+                return;
+            }
             chatContainer.innerHTML = '';
             messageHistory = [];
             messagesState = [];
@@ -248,13 +276,30 @@
         async function sendMessage() {
             const userMessage = messageInput.value.trim();
             if (!userMessage || isGenerating) return;
-            if (!currentConversationId) {
+            if (!currentConversationId && !isGuest) {
                 await handleCreateConversation();
+            }
+            if (!currentConversationId && isGuest) {
+                currentConversationId = 0;
             }
             appendMessage('user', userMessage);
             messageInput.value = '';
-            const loadingId = showLoading();
+            let assistantIndex = null;
+            let assistantId = null;
+            if (isGuest) {
+                assistantId = `guest-${Date.now()}`;
+                assistantIndex = messagesState.length;
+                messagesState.push({
+                    id: assistantId,
+                    role: 'assistant',
+                    content: '',
+                    createdAt: new Date().toISOString(),
+                });
+            }
+            const loadingId = showLoading(assistantId, assistantIndex);
             isGenerating = true;
+            let aiResponse = '';
+            let requestOk = false;
 
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -276,7 +321,6 @@
                 if (!response.ok) throw new Error(response.statusText);
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
-                let aiResponse = '';
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
@@ -303,17 +347,30 @@
                     }
                 }
                 messageHistory.push({ role: 'assistant', content: aiResponse });
+                requestOk = true;
             } catch (error) {
                 const isAbort = error.name === 'AbortError';
                 showError(isAbort ? 'Request timed out' : 'Request failed');
                 console.error('Request error:', error);
             } finally {
                 clearTimeout(timeoutId);
-                removeLoading(loadingId);
-                isGenerating = false;
-                if (currentConversationId) {
-                    await loadMessages(currentConversationId);
+                if (isGuest) {
+                    if (requestOk && assistantIndex !== null) {
+                        messagesState[assistantIndex].content = aiResponse;
+                        applySelectionHighlight();
+                    } else if (assistantIndex !== null) {
+                        messagesState.splice(assistantIndex, 1);
+                    }
+                    if (!requestOk) {
+                        removeLoading(loadingId);
+                    }
+                } else {
+                    removeLoading(loadingId);
+                    if (currentConversationId) {
+                        await loadMessages(currentConversationId);
+                    }
                 }
+                isGenerating = false;
             }
         }
 
@@ -442,6 +499,7 @@
         }
 
         function persistSelection() {
+            if (isGuest) return;
             if (!currentConversationId) return;
             const key = selectionKey(currentConversationId);
             if (!selectedRange) {
@@ -452,6 +510,7 @@
         }
 
         function restoreSelection() {
+            if (isGuest) return;
             if (!currentConversationId) return;
             const key = selectionKey(currentConversationId);
             const saved = window.localStorage.getItem(key);
@@ -490,10 +549,16 @@
             messageInput.focus();
         }
 
-        function showLoading() {
+        function showLoading(messageId, seq) {
             const loadingDiv = document.createElement('div');
             loadingDiv.className = 'message message-assistant';
-            loadingDiv.id = `loading-${Date.now()}`;
+            loadingDiv.id = messageId || `loading-${Date.now()}`;
+            if (Number.isInteger(seq)) {
+                loadingDiv.dataset.index = String(seq);
+                if (messageId) {
+                    loadingDiv.dataset.id = messageId;
+                }
+            }
 
             const indicator = document.createElement('div');
             indicator.className = 'loading-indicator';
@@ -513,6 +578,7 @@
             if (messageDiv) {
                 let contentDiv = messageDiv.querySelector('.message-content');
                 let timeDiv = messageDiv.querySelector('.message-time');
+                const indicator = messageDiv.querySelector('.loading-indicator');
 
                 if (!contentDiv) {
                     contentDiv = document.createElement('div');
@@ -523,6 +589,10 @@
                     timeDiv = document.createElement('div');
                     timeDiv.className = 'message-time';
                     messageDiv.appendChild(timeDiv);
+                }
+
+                if (indicator) {
+                    indicator.remove();
                 }
 
                 contentDiv.textContent = content;
