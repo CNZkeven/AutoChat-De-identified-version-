@@ -116,6 +116,7 @@ stop_pid "$LOG_DIR/frontend.pid" "frontend"
 
 kill_port_processes "$BACKEND_PORT" "backend" "uvicorn" "backend.app.main:app"
 kill_port_processes "$FRONTEND_PORT" "frontend" "http.server" "$ROOT_DIR/frontend"
+kill_port_processes "$FRONTEND_PORT" "frontend" "frontend-react"
 
 if command -v pg_ctl >/dev/null 2>&1 && [ -s "$PGDATA/PG_VERSION" ]; then
     if [ -f "$POSTGRES_MARKER" ]; then

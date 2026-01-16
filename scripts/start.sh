@@ -57,8 +57,7 @@ if command -v python >/dev/null 2>&1; then
 elif command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN="python3"
 else
-    echo "Python not found. Install Python 3 to run the backend/frontend." | tee -a "$LOG_DIR/backend.log"
-    echo "Python not found. Install Python 3 to run the backend/frontend." | tee -a "$LOG_DIR/frontend.log"
+    echo "Python not found. Install Python 3 to run the backend." | tee -a "$LOG_DIR/backend.log"
     exit 1
 fi
 log_info "Using Python binary: $PYTHON_BIN"
@@ -141,6 +140,14 @@ else
     backend_status="running (pid $backend_pid)"
 fi
 
+if ! command -v npm >/dev/null 2>&1; then
+    log_error "npm not found. Install Node.js to run the React frontend."
+    exit 1
+fi
+
+: "${VITE_API_URL:=http://localhost:${BACKEND_PORT}}"
+export VITE_API_URL
+
 frontend_port_in_use=false
 if check_port_listening "$FRONTEND_PORT"; then
     frontend_port_in_use=true
@@ -161,14 +168,16 @@ if [ "$frontend_port_in_use" = true ]; then
         frontend_status="port in use"
     fi
 else
-    log_info "Starting frontend on port $FRONTEND_PORT..."
-    nohup "$PYTHON_BIN" -m http.server "$FRONTEND_PORT" --directory "$ROOT_DIR/frontend" >> "$LOG_DIR/frontend.log" 2>&1 &
-    frontend_pid=$!
-    echo "$frontend_pid" > "$LOG_DIR/frontend.pid"
-    frontend_status="running (pid $frontend_pid)"
+    log_info "Starting React frontend on port $FRONTEND_PORT..."
+    (
+        cd "$ROOT_DIR/frontend-react"
+        nohup npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" >> "$LOG_DIR/frontend.log" 2>&1 &
+        echo $! > "$LOG_DIR/frontend.pid"
+    )
+    frontend_status="running (pid $(cat "$LOG_DIR/frontend.pid"))"
 fi
 
-echo "Started services:"
+echo "Started services (React frontend):"
 echo "  - postgres: port $PGPORT"
 echo "  - backend:  $BACKEND_PORT ($backend_status)"
 echo "  - frontend: $FRONTEND_PORT ($frontend_status)"
