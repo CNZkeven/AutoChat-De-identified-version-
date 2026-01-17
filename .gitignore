@@ -13,3 +13,8 @@ AGENTS.md
 CLAUDE.md
 
 backend/.env
+.env
+.env.*
+!.env.example
+.codex
+database

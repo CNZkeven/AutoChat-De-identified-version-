@@ -4,6 +4,11 @@
 AutoChat provides a FastAPI backend with multiple agent chat endpoints and a static frontend for interacting with those agents.
 React frontend is the default via `scripts/start.sh` (or `scripts/start_react.sh`).
 
+## Docker Compose
+- Recommended cross-platform dev entrypoint: `cp .env.example .env` then `docker compose up --build`.
+- Services include Postgres, FastAPI backend, and the Vite React frontend.
+- Backend health check endpoint: `GET /health`.
+
 ## React Frontend Notes
 - Uses Vite dev server. `VITE_API_URL` points to backend.
 - `VITE_ALLOW_GUEST=false` disables guest access.
