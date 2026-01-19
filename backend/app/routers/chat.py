@@ -113,11 +113,14 @@ def _get_conversation(db: Session, conversation_id: int, user_id: int, agent: st
     return convo
 
 
-def _add_message(db: Session, conversation_id: int, role: str, content: str) -> Message:
+def _add_message(
+    db: Session, conversation_id: int, role: str, content: str, user_id: int | None
+) -> Message:
     message = Message(
         conversation_id=conversation_id,
         role=role,
         content=content,
+        user_id=user_id,
         created_at=datetime.utcnow(),
     )
     db.add(message)
@@ -162,7 +165,7 @@ def chat(
 
     if not is_guest:
         convo = _get_conversation(db, payload.conversation_id, current_user.id, agent)
-        _add_message(db, convo.id, "user", messages[-1]["content"])
+        _add_message(db, convo.id, "user", messages[-1]["content"], current_user.id)
         memory_summary = fetch_latest_memory_summary(db, current_user.id, agent)
     else:
         convo = None
@@ -200,7 +203,7 @@ def chat(
                     assistant_chunks.append(chunk)
                     full_text = "".join(assistant_chunks)
                     if assistant_message_id is None:
-                        message = _add_message(stream_db, convo.id, "assistant", full_text)
+                        message = _add_message(stream_db, convo.id, "assistant", full_text, None)
                         assistant_message_id = message.id
                     else:
                         stream_db.query(Message).filter(Message.id == assistant_message_id).update(

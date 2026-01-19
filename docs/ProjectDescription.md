@@ -17,6 +17,11 @@ React frontend is the default via `scripts/start.sh` (or `scripts/start_react.sh
 - Authenticated users get saved conversations and memory summaries.
 - Guest mode allows chat without login; guest conversations are not stored in the database or memory.
 
+## Database Merge (Postgres)
+- Unified schema now includes knowledge base, courses, and tools tables, plus optional sessions.
+- Migration helper: `scripts/migrate_sqlite_to_postgres.py` (reads `database/agent_db.sqlite`).
+- Default migration agent for historical chat sessions: `task`.
+
 ## Conversation Titles
 - Default title is “新对话”.
 - After the first assistant reply, titles are auto-generated in Chinese when still using the default.
