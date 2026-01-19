@@ -1,6 +1,9 @@
 import { memo } from 'react';
 import { User, Bot, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import type { Message } from '../../types';
 
 interface MessageBubbleProps {
@@ -72,8 +75,43 @@ export const MessageBubble = memo(function MessageBubble({
           {isUser ? (
             <p className="whitespace-pre-wrap break-words">{message.content}</p>
           ) : (
-            <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2">
-              <ReactMarkdown>{message.content || '...'}</ReactMarkdown>
+            <div className="markdown-body prose prose-sm prose-invert max-w-none prose-p:my-1 prose-headings:my-2">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm, remarkMath]}
+                rehypePlugins={[rehypeKatex]}
+                components={{
+                  table: ({ children }) => (
+                    <div className="my-3 overflow-x-auto">
+                      <table className="w-full border-collapse text-sm">{children}</table>
+                    </div>
+                  ),
+                  thead: ({ children }) => <thead className="bg-white/10">{children}</thead>,
+                  th: ({ children }) => (
+                    <th className="px-3 py-2 text-left font-semibold border-b border-white/20">
+                      {children}
+                    </th>
+                  ),
+                  td: ({ children }) => (
+                    <td className="px-3 py-2 align-top border-b border-white/10">{children}</td>
+                  ),
+                  code: ({ inline, className, children }) => {
+                    if (inline) {
+                      return (
+                        <code className="px-1 py-0.5 rounded bg-white/10 text-[0.85em]">
+                          {children}
+                        </code>
+                      );
+                    }
+                    return (
+                      <pre className="my-2 overflow-x-auto rounded-lg bg-black/60 p-3 text-xs text-white">
+                        <code className={className}>{children}</code>
+                      </pre>
+                    );
+                  },
+                }}
+              >
+                {message.content || '...'}
+              </ReactMarkdown>
             </div>
           )}
         </div>
