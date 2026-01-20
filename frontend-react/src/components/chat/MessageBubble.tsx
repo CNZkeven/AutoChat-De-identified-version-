@@ -94,8 +94,9 @@ export const MessageBubble = memo(function MessageBubble({
                   td: ({ children }) => (
                     <td className="px-3 py-2 align-top border-b border-white/10">{children}</td>
                   ),
-                  code: ({ inline, className, children }) => {
-                    if (inline) {
+                  code: ({ className, children }) => {
+                    const isInline = !className;
+                    if (isInline) {
                       return (
                         <code className="px-1 py-0.5 rounded bg-white/10 text-[0.85em]">
                           {children}

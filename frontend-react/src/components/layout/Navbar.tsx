@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { Home, LogOut, Moon, Sun, User } from 'lucide-react';
+import { Home, LogOut, Moon, Sun, User, Shield } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useUIStore } from '../../store/uiStore';
 
@@ -72,6 +72,16 @@ export function Navbar({ title, agentColor }: NavbarProps) {
                     {user?.username}
                   </span>
                 </div>
+
+                {user?.username === 'admin' && (
+                  <Link
+                    to="/admin"
+                    className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 text-blue-500 dark:text-blue-300 rounded-lg hover:bg-blue-500/20 transition-colors"
+                  >
+                    <Shield size={16} />
+                    <span className="text-sm font-medium">管理员</span>
+                  </Link>
+                )}
 
                 {/* Logout button */}
                 <button

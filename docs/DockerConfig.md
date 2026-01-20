@@ -21,7 +21,7 @@
 
 请先自动扫描并记录以下信息（写入你生成的实施说明或注释中即可，不要输出到终端以外的地方也行）：
 
-1. 仓库顶层目录结构：是否存在 `frontend/`、`backend/`、`apps/`、`api/`、`server/` 等。
+1. 仓库顶层目录结构：是否存在 `frontend-react/`、`backend/`、`apps/`、`api/`、`server/` 等。
 2. 前端技术与启动命令：
 
    * `package.json` 中的 `scripts`（dev/build/test）
@@ -96,7 +96,7 @@
    * `pip install -r requirements.txt`
 7. 生成一个简易健康检查端点（例如 `/health`），如项目已存在则复用；如没有，请在后端增加一个最小实现（不影响业务）。
 
-### 2.3 前端 `frontend/Dockerfile`（路径按实际探测）
+### 2.3 前端 `frontend-react/Dockerfile`（路径按实际探测）
 
 要求：
 
@@ -238,5 +238,4 @@
 如果仓库结构或端口等确实无法从文件中判断，请在改动前向我提出最少量澄清问题；否则直接按探测结果实施。
 
 ---
-
 
