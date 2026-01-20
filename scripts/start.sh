@@ -3,12 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="$ROOT_DIR/.logs"
-PGDATA="$ROOT_DIR/.pgdata"
-PGPORT="${PGPORT:-5432}"
-BACKEND_PORT="${BACKEND_PORT:-8000}"
-FRONTEND_PORT="${FRONTEND_PORT:-5173}"
-ENV_FILE="$ROOT_DIR/backend/.env"
-POSTGRES_MARKER="$LOG_DIR/postgres.local"
+PORTS_FILE="$LOG_DIR/compose-ports.env"
+ENV_FILE="$ROOT_DIR/.env"
+EXAMPLE_FILE="$ROOT_DIR/.env.example"
 
 log_info() {
     echo "[start] $*"
@@ -20,6 +17,10 @@ log_warn() {
 
 log_error() {
     echo "[start][error] $*" >&2
+}
+
+compose() {
+    (cd "$ROOT_DIR" && docker compose "$@")
 }
 
 check_port_listening() {
@@ -35,159 +36,199 @@ check_port_listening() {
     return 2
 }
 
-mkdir -p "$LOG_DIR"
-touch "$LOG_DIR/backend.log" "$LOG_DIR/frontend.log" "$LOG_DIR/postgres.log"
-shopt -s nullglob
-for log_file in "$LOG_DIR"/*.log; do
-    : > "$log_file"
-    chmod 644 "$log_file" || true
-done
-shopt -u nullglob
-log_info "Cleared logs under $LOG_DIR."
-
-if [ -f "$ENV_FILE" ]; then
-    set -a
-    source "$ENV_FILE"
-    set +a
-    log_info "Loaded environment overrides from $ENV_FILE."
-fi
-
-if command -v python >/dev/null 2>&1; then
-    PYTHON_BIN="python"
-elif command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN="python3"
-else
-    echo "Python not found. Install Python 3 to run the backend." | tee -a "$LOG_DIR/backend.log"
-    exit 1
-fi
-log_info "Using Python binary: $PYTHON_BIN"
-
-port_in_use=false
-if check_port_listening "$PGPORT"; then
-    port_in_use=true
-else
-    check_status=$?
-    if [ "$check_status" -eq 2 ]; then
-        log_warn "Neither lsof nor nc found; cannot check port $PGPORT."
+is_port_available() {
+    local port="$1"
+    if check_port_listening "$port"; then
+        return 1
     fi
-fi
-
-if [ "$port_in_use" = true ]; then
-    echo "Detected PostgreSQL already listening on port $PGPORT; skipping local startup." | tee -a "$LOG_DIR/postgres.log"
-    rm -f "$POSTGRES_MARKER"
-    log_info "Using existing PostgreSQL on port $PGPORT."
-else
-    if ! command -v pg_ctl >/dev/null 2>&1; then
-        echo "pg_ctl not found. Install PostgreSQL or ensure a service is running on port $PGPORT." | tee -a "$LOG_DIR/postgres.log"
-        exit 1
+    local status=$?
+    if [ "$status" -eq 2 ]; then
+        log_warn "无法检查端口 $port（缺少 lsof/nc），尝试继续使用。"
     fi
+    return 0
+}
 
-    if [ ! -s "$PGDATA/PG_VERSION" ]; then
-        mkdir -p "$PGDATA"
-        initdb -D "$PGDATA" >> "$LOG_DIR/postgres.log" 2>&1
+add_candidate() {
+    local value="$1"
+    local list_name="$2"
+    if [ -z "$value" ]; then
+        return 0
     fi
-
-    if ! pg_ctl -D "$PGDATA" status >/dev/null 2>&1; then
-        if ! pg_ctl -D "$PGDATA" -l "$LOG_DIR/postgres.log" -o "-p $PGPORT" start >> "$LOG_DIR/postgres.log" 2>&1; then
-            echo "Failed to start local PostgreSQL. Check $LOG_DIR/postgres.log or install PostgreSQL." | tee -a "$LOG_DIR/postgres.log"
-            exit 1
+    eval "local existing=(\"\${${list_name}[@]}\")"
+    local item
+    for item in "${existing[@]}"; do
+        if [ "$item" = "$value" ]; then
+            return 0
         fi
+    done
+    eval "${list_name}+=(\"$value\")"
+}
+
+find_available_port() {
+    local -a candidates=("$@")
+    local port
+    for port in "${candidates[@]}"; do
+        if [ -z "$port" ]; then
+            continue
+        fi
+        if is_port_available "$port"; then
+            echo "$port"
+            return 0
+        fi
+    done
+    return 1
+}
+
+find_available_port_in_range() {
+    local start="$1"
+    local end="$2"
+    local port
+    for port in $(seq "$start" "$end"); do
+        if is_port_available "$port"; then
+            echo "$port"
+            return 0
+        fi
+    done
+    return 1
+}
+
+get_compose_port() {
+    local service="$1"
+    local container_port="$2"
+    local mapping
+    mapping=$(compose port "$service" "$container_port" 2>/dev/null | head -n1 || true)
+    if [ -n "$mapping" ]; then
+        echo "${mapping##*:}"
     fi
-    touch "$POSTGRES_MARKER"
-    log_info "Started local PostgreSQL (data dir: $PGDATA, port: $PGPORT)."
-fi
+}
 
-db_exists=false
-if command -v psql >/dev/null 2>&1; then
-    db_exists_value="$(psql -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='autochat'" 2>/dev/null | tr -d '[:space:]')"
-    if [ "$db_exists_value" = "1" ]; then
-        db_exists=true
-    fi
-fi
-
-if [ "$db_exists" = true ]; then
-    log_info "Database 'autochat' already exists; skipping creation."
-elif command -v createdb >/dev/null 2>&1; then
-    if createdb -p "$PGPORT" autochat >> "$LOG_DIR/postgres.log" 2>&1; then
-        log_info "Created database 'autochat'."
-    else
-        log_warn "createdb failed (permission denied or other error). See $LOG_DIR/postgres.log."
-    fi
-else
-    log_warn "psql/createdb not found; skipping database creation."
-fi
-
-: "${DATABASE_URL:=postgresql+psycopg://localhost:${PGPORT}/autochat}"
-export DATABASE_URL
-export LOG_DIR
-log_info "DATABASE_URL=$DATABASE_URL"
-
-backend_port_in_use=false
-if check_port_listening "$BACKEND_PORT"; then
-    backend_port_in_use=true
-else
-    check_status=$?
-    if [ "$check_status" -eq 2 ]; then
-        log_warn "Cannot verify backend port $BACKEND_PORT (missing lsof/nc)."
-    fi
-fi
-
-backend_status="skipped"
-if [ "$backend_port_in_use" = true ]; then
-    if [ -f "$LOG_DIR/backend.pid" ] && kill -0 "$(cat "$LOG_DIR/backend.pid" 2>/dev/null)" >/dev/null 2>&1; then
-        log_warn "Backend already running on port $BACKEND_PORT (pid $(cat "$LOG_DIR/backend.pid"))."
-        backend_status="already running"
-    else
-        log_error "Port $BACKEND_PORT already in use; skipping backend start."
-        backend_status="port in use"
-    fi
-else
-    log_info "Starting backend on port $BACKEND_PORT..."
-    PYTHONPATH="$ROOT_DIR" \
-        nohup "$PYTHON_BIN" -m uvicorn backend.app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" >> "$LOG_DIR/backend.log" 2>&1 &
-    backend_pid=$!
-    echo "$backend_pid" > "$LOG_DIR/backend.pid"
-    backend_status="running (pid $backend_pid)"
-fi
-
-if ! command -v npm >/dev/null 2>&1; then
-    log_error "npm not found. Install Node.js to run the React frontend."
+if ! command -v docker >/dev/null 2>&1; then
+    log_error "docker 未安装或不可用。请先安装 Docker Desktop。"
     exit 1
 fi
 
-: "${VITE_API_URL:=http://localhost:${BACKEND_PORT}}"
-export VITE_API_URL
+if ! docker compose version >/dev/null 2>&1; then
+    log_error "docker compose 不可用。请升级 Docker Desktop 或安装 Compose v2。"
+    exit 1
+fi
 
-frontend_port_in_use=false
-if check_port_listening "$FRONTEND_PORT"; then
-    frontend_port_in_use=true
-else
-    check_status=$?
-    if [ "$check_status" -eq 2 ]; then
-        log_warn "Cannot verify frontend port $FRONTEND_PORT (missing lsof/nc)."
+mkdir -p "$LOG_DIR"
+
+if [ ! -f "$ENV_FILE" ]; then
+    cp "$EXAMPLE_FILE" "$ENV_FILE"
+    log_info "已从 $EXAMPLE_FILE 创建 $ENV_FILE。"
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+if [ -f "$PORTS_FILE" ]; then
+    # shellcheck disable=SC1090
+    source "$PORTS_FILE"
+fi
+
+DEFAULT_POSTGRES_PORT="${POSTGRES_PORT:-5433}"
+DEFAULT_BACKEND_PORT="${BACKEND_PORT:-8000}"
+DEFAULT_FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+POSTGRES_PORT_MIN=5433
+POSTGRES_PORT_MAX=5499
+BACKEND_PORT_MIN=8000
+BACKEND_PORT_MAX=8099
+FRONTEND_PORT_MIN=5173
+FRONTEND_PORT_MAX=5199
+
+if compose ps --services --status running 2>/dev/null | grep -qx "db"; then
+    POSTGRES_PORT="$(get_compose_port db 5432)"
+    BACKEND_PORT="$(get_compose_port backend 8000)"
+    FRONTEND_PORT="$(get_compose_port frontend 5173)"
+fi
+
+if [ -n "${POSTGRES_PORT:-}" ] && ! is_port_available "$POSTGRES_PORT"; then
+    log_warn "端口 $POSTGRES_PORT 已被占用，尝试在 ${POSTGRES_PORT_MIN}-${POSTGRES_PORT_MAX} 内选择可用端口。"
+    POSTGRES_PORT=""
+fi
+
+if [ -z "${POSTGRES_PORT:-}" ]; then
+    candidates=()
+    add_candidate "${LAST_POSTGRES_PORT:-}" candidates
+    add_candidate "$DEFAULT_POSTGRES_PORT" candidates
+    POSTGRES_PORT="$(find_available_port "${candidates[@]}")" || POSTGRES_PORT=""
+    if [ -z "$POSTGRES_PORT" ]; then
+        POSTGRES_PORT="$(find_available_port_in_range "$POSTGRES_PORT_MIN" "$POSTGRES_PORT_MAX")" || {
+            log_error "未找到可用的 Postgres 端口（${POSTGRES_PORT_MIN}-${POSTGRES_PORT_MAX}）。"
+            exit 1
+        }
     fi
 fi
 
-frontend_status="skipped"
-if [ "$frontend_port_in_use" = true ]; then
-    if [ -f "$LOG_DIR/frontend.pid" ] && kill -0 "$(cat "$LOG_DIR/frontend.pid" 2>/dev/null)" >/dev/null 2>&1; then
-        log_warn "Frontend already running on port $FRONTEND_PORT (pid $(cat "$LOG_DIR/frontend.pid"))."
-        frontend_status="already running"
-    else
-        log_error "Port $FRONTEND_PORT already in use; skipping frontend start."
-        frontend_status="port in use"
-    fi
-else
-    log_info "Starting React frontend on port $FRONTEND_PORT..."
-    (
-        cd "$ROOT_DIR/frontend-react"
-        nohup npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" >> "$LOG_DIR/frontend.log" 2>&1 &
-        echo $! > "$LOG_DIR/frontend.pid"
-    )
-    frontend_status="running (pid $(cat "$LOG_DIR/frontend.pid"))"
+if [ -n "${BACKEND_PORT:-}" ] && ! is_port_available "$BACKEND_PORT"; then
+    log_warn "端口 $BACKEND_PORT 已被占用，尝试在 ${BACKEND_PORT_MIN}-${BACKEND_PORT_MAX} 内选择可用端口。"
+    BACKEND_PORT=""
 fi
 
-echo "Started services (React frontend):"
-echo "  - postgres: port $PGPORT"
-echo "  - backend:  $BACKEND_PORT ($backend_status)"
-echo "  - frontend: $FRONTEND_PORT ($frontend_status)"
+if [ -z "${BACKEND_PORT:-}" ]; then
+    candidates=()
+    add_candidate "${LAST_BACKEND_PORT:-}" candidates
+    add_candidate "$DEFAULT_BACKEND_PORT" candidates
+    BACKEND_PORT="$(find_available_port "${candidates[@]}")" || BACKEND_PORT=""
+    if [ -z "$BACKEND_PORT" ]; then
+        BACKEND_PORT="$(find_available_port_in_range "$BACKEND_PORT_MIN" "$BACKEND_PORT_MAX")" || {
+            log_error "未找到可用的后端端口（${BACKEND_PORT_MIN}-${BACKEND_PORT_MAX}）。"
+            exit 1
+        }
+    fi
+fi
+
+if [ -n "${FRONTEND_PORT:-}" ] && ! is_port_available "$FRONTEND_PORT"; then
+    log_warn "端口 $FRONTEND_PORT 已被占用，尝试在 ${FRONTEND_PORT_MIN}-${FRONTEND_PORT_MAX} 内选择可用端口。"
+    FRONTEND_PORT=""
+fi
+
+if [ -z "${FRONTEND_PORT:-}" ]; then
+    candidates=()
+    add_candidate "${LAST_FRONTEND_PORT:-}" candidates
+    add_candidate "$DEFAULT_FRONTEND_PORT" candidates
+    FRONTEND_PORT="$(find_available_port "${candidates[@]}")" || FRONTEND_PORT=""
+    if [ -z "$FRONTEND_PORT" ]; then
+        FRONTEND_PORT="$(find_available_port_in_range "$FRONTEND_PORT_MIN" "$FRONTEND_PORT_MAX")" || {
+            log_error "未找到可用的前端端口（${FRONTEND_PORT_MIN}-${FRONTEND_PORT_MAX}）。"
+            exit 1
+        }
+    fi
+fi
+
+if check_port_listening "$POSTGRES_PORT" && ! (compose ps --services --status running 2>/dev/null | grep -qx "db"); then
+    log_error "端口 $POSTGRES_PORT 已被非本项目进程占用，请更换端口或释放后重试。"
+    exit 1
+fi
+
+if check_port_listening "$BACKEND_PORT" && ! (compose ps --services --status running 2>/dev/null | grep -qx "backend"); then
+    log_error "端口 $BACKEND_PORT 已被非本项目进程占用，请更换端口或释放后重试。"
+    exit 1
+fi
+
+if check_port_listening "$FRONTEND_PORT" && ! (compose ps --services --status running 2>/dev/null | grep -qx "frontend"); then
+    log_error "端口 $FRONTEND_PORT 已被非本项目进程占用，请更换端口或释放后重试。"
+    exit 1
+fi
+
+export POSTGRES_PORT
+export BACKEND_PORT
+export FRONTEND_PORT
+export VITE_API_URL="http://localhost:${BACKEND_PORT}"
+
+log_info "启动 Docker Compose 全栈服务..."
+compose up -d --build
+
+cat > "$PORTS_FILE" <<PORTS
+LAST_POSTGRES_PORT=$POSTGRES_PORT
+LAST_BACKEND_PORT=$BACKEND_PORT
+LAST_FRONTEND_PORT=$FRONTEND_PORT
+PORTS
+
+log_info "服务启动完成。"
+log_info "Frontend: http://localhost:$FRONTEND_PORT"
+log_info "Backend:  http://localhost:$BACKEND_PORT"
+log_info "Postgres: localhost:$POSTGRES_PORT"
