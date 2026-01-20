@@ -9,18 +9,21 @@ AutoChat is a full-stack app with a React (Vite) frontend, a FastAPI backend, an
    - macOS/Linux: `cp .env.example .env`
    - Windows PowerShell: `Copy-Item .env.example .env`
 3. Start the stack:
-   - `docker compose up --build`
+   - macOS/Linux: `./scripts/start.sh`
+   - Windows PowerShell: `.\scripts\dev.ps1`
+   - or `docker compose up --build`
 
 After startup:
 - Frontend: http://localhost:5173
 - Backend: http://localhost:8000
 - Health check: http://localhost:8000/health
+- Postgres: localhost:5433 (configurable via POSTGRES_PORT)
 
 ## Daily Development
 - Start only Postgres: `docker compose up -d db`
 - Rebuild a service: `docker compose build backend`
 - View logs: `docker compose logs -f backend`
-- Stop services: `docker compose down`
+- Stop services: `./scripts/stop.sh` or `docker compose down`
 
 ## Database initialization / migrations
 - This project does not use Alembic yet.
@@ -34,9 +37,7 @@ After startup:
   `Set-ExecutionPolicy -Scope Process Bypass` and then `.\scripts\dev.ps1`.
 
 ## Local development (without Docker)
-- Start everything locally (React + FastAPI + Postgres): `./scripts/start.sh`
-- Stop services: `./scripts/stop.sh`
-- Backend env file: `backend/.env` (see `backend/.env.example` for a full list).
+- 当前推荐使用 Docker Compose；如需本机直跑，请自行配置 `backend/.env` 与依赖版本。
 
 ## Developer scripts
 - macOS/Linux: `./scripts/dev.sh`

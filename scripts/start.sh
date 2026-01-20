@@ -2,13 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOG_DIR="$ROOT_DIR/.logs"
-PGDATA="$ROOT_DIR/.pgdata"
-PGPORT="${PGPORT:-5432}"
-BACKEND_PORT="${BACKEND_PORT:-8000}"
-FRONTEND_PORT="${FRONTEND_PORT:-5173}"
-ENV_FILE="$ROOT_DIR/backend/.env"
-POSTGRES_MARKER="$LOG_DIR/postgres.local"
+ENV_FILE="$ROOT_DIR/.env"
+EXAMPLE_FILE="$ROOT_DIR/.env.example"
 
 log_info() {
     echo "[start] $*"
@@ -20,6 +15,10 @@ log_warn() {
 
 log_error() {
     echo "[start][error] $*" >&2
+}
+
+compose() {
+    (cd "$ROOT_DIR" && docker compose "$@")
 }
 
 check_port_listening() {
@@ -35,159 +34,54 @@ check_port_listening() {
     return 2
 }
 
-mkdir -p "$LOG_DIR"
-touch "$LOG_DIR/backend.log" "$LOG_DIR/frontend.log" "$LOG_DIR/postgres.log"
-shopt -s nullglob
-for log_file in "$LOG_DIR"/*.log; do
-    : > "$log_file"
-    chmod 644 "$log_file" || true
-done
-shopt -u nullglob
-log_info "Cleared logs under $LOG_DIR."
-
-if [ -f "$ENV_FILE" ]; then
-    set -a
-    source "$ENV_FILE"
-    set +a
-    log_info "Loaded environment overrides from $ENV_FILE."
-fi
-
-if command -v python >/dev/null 2>&1; then
-    PYTHON_BIN="python"
-elif command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN="python3"
-else
-    echo "Python not found. Install Python 3 to run the backend." | tee -a "$LOG_DIR/backend.log"
+if ! command -v docker >/dev/null 2>&1; then
+    log_error "docker 未安装或不可用。请先安装 Docker Desktop。"
     exit 1
 fi
-log_info "Using Python binary: $PYTHON_BIN"
+
+if ! docker compose version >/dev/null 2>&1; then
+    log_error "docker compose 不可用。请升级 Docker Desktop 或安装 Compose v2。"
+    exit 1
+fi
+
+if [ ! -f "$ENV_FILE" ]; then
+    cp "$EXAMPLE_FILE" "$ENV_FILE"
+    log_info "已从 $EXAMPLE_FILE 创建 $ENV_FILE。"
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+POSTGRES_PORT="${POSTGRES_PORT:-5433}"
+BACKEND_PORT="${BACKEND_PORT:-8000}"
+FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 
 port_in_use=false
-if check_port_listening "$PGPORT"; then
+if check_port_listening "$POSTGRES_PORT"; then
     port_in_use=true
 else
     check_status=$?
     if [ "$check_status" -eq 2 ]; then
-        log_warn "Neither lsof nor nc found; cannot check port $PGPORT."
+        log_warn "无法检查端口 $POSTGRES_PORT（缺少 lsof/nc）。"
     fi
 fi
 
 if [ "$port_in_use" = true ]; then
-    echo "Detected PostgreSQL already listening on port $PGPORT; skipping local startup." | tee -a "$LOG_DIR/postgres.log"
-    rm -f "$POSTGRES_MARKER"
-    log_info "Using existing PostgreSQL on port $PGPORT."
-else
-    if ! command -v pg_ctl >/dev/null 2>&1; then
-        echo "pg_ctl not found. Install PostgreSQL or ensure a service is running on port $PGPORT." | tee -a "$LOG_DIR/postgres.log"
+    if compose ps --services --status running 2>/dev/null | grep -qx "db"; then
+        log_warn "端口 $POSTGRES_PORT 已被当前项目占用，先停止旧容器。"
+        compose down
+    else
+        log_error "端口 $POSTGRES_PORT 已被非本项目进程占用，请先释放该端口后重试。"
         exit 1
     fi
-
-    if [ ! -s "$PGDATA/PG_VERSION" ]; then
-        mkdir -p "$PGDATA"
-        initdb -D "$PGDATA" >> "$LOG_DIR/postgres.log" 2>&1
-    fi
-
-    if ! pg_ctl -D "$PGDATA" status >/dev/null 2>&1; then
-        if ! pg_ctl -D "$PGDATA" -l "$LOG_DIR/postgres.log" -o "-p $PGPORT" start >> "$LOG_DIR/postgres.log" 2>&1; then
-            echo "Failed to start local PostgreSQL. Check $LOG_DIR/postgres.log or install PostgreSQL." | tee -a "$LOG_DIR/postgres.log"
-            exit 1
-        fi
-    fi
-    touch "$POSTGRES_MARKER"
-    log_info "Started local PostgreSQL (data dir: $PGDATA, port: $PGPORT)."
 fi
 
-db_exists=false
-if command -v psql >/dev/null 2>&1; then
-    db_exists_value="$(psql -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='autochat'" 2>/dev/null | tr -d '[:space:]')"
-    if [ "$db_exists_value" = "1" ]; then
-        db_exists=true
-    fi
-fi
+log_info "启动 Docker Compose 全栈服务..."
+compose up -d --build
 
-if [ "$db_exists" = true ]; then
-    log_info "Database 'autochat' already exists; skipping creation."
-elif command -v createdb >/dev/null 2>&1; then
-    if createdb -p "$PGPORT" autochat >> "$LOG_DIR/postgres.log" 2>&1; then
-        log_info "Created database 'autochat'."
-    else
-        log_warn "createdb failed (permission denied or other error). See $LOG_DIR/postgres.log."
-    fi
-else
-    log_warn "psql/createdb not found; skipping database creation."
-fi
-
-: "${DATABASE_URL:=postgresql+psycopg://localhost:${PGPORT}/autochat}"
-export DATABASE_URL
-export LOG_DIR
-log_info "DATABASE_URL=$DATABASE_URL"
-
-backend_port_in_use=false
-if check_port_listening "$BACKEND_PORT"; then
-    backend_port_in_use=true
-else
-    check_status=$?
-    if [ "$check_status" -eq 2 ]; then
-        log_warn "Cannot verify backend port $BACKEND_PORT (missing lsof/nc)."
-    fi
-fi
-
-backend_status="skipped"
-if [ "$backend_port_in_use" = true ]; then
-    if [ -f "$LOG_DIR/backend.pid" ] && kill -0 "$(cat "$LOG_DIR/backend.pid" 2>/dev/null)" >/dev/null 2>&1; then
-        log_warn "Backend already running on port $BACKEND_PORT (pid $(cat "$LOG_DIR/backend.pid"))."
-        backend_status="already running"
-    else
-        log_error "Port $BACKEND_PORT already in use; skipping backend start."
-        backend_status="port in use"
-    fi
-else
-    log_info "Starting backend on port $BACKEND_PORT..."
-    PYTHONPATH="$ROOT_DIR" \
-        nohup "$PYTHON_BIN" -m uvicorn backend.app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" >> "$LOG_DIR/backend.log" 2>&1 &
-    backend_pid=$!
-    echo "$backend_pid" > "$LOG_DIR/backend.pid"
-    backend_status="running (pid $backend_pid)"
-fi
-
-if ! command -v npm >/dev/null 2>&1; then
-    log_error "npm not found. Install Node.js to run the React frontend."
-    exit 1
-fi
-
-: "${VITE_API_URL:=http://localhost:${BACKEND_PORT}}"
-export VITE_API_URL
-
-frontend_port_in_use=false
-if check_port_listening "$FRONTEND_PORT"; then
-    frontend_port_in_use=true
-else
-    check_status=$?
-    if [ "$check_status" -eq 2 ]; then
-        log_warn "Cannot verify frontend port $FRONTEND_PORT (missing lsof/nc)."
-    fi
-fi
-
-frontend_status="skipped"
-if [ "$frontend_port_in_use" = true ]; then
-    if [ -f "$LOG_DIR/frontend.pid" ] && kill -0 "$(cat "$LOG_DIR/frontend.pid" 2>/dev/null)" >/dev/null 2>&1; then
-        log_warn "Frontend already running on port $FRONTEND_PORT (pid $(cat "$LOG_DIR/frontend.pid"))."
-        frontend_status="already running"
-    else
-        log_error "Port $FRONTEND_PORT already in use; skipping frontend start."
-        frontend_status="port in use"
-    fi
-else
-    log_info "Starting React frontend on port $FRONTEND_PORT..."
-    (
-        cd "$ROOT_DIR/frontend-react"
-        nohup npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" >> "$LOG_DIR/frontend.log" 2>&1 &
-        echo $! > "$LOG_DIR/frontend.pid"
-    )
-    frontend_status="running (pid $(cat "$LOG_DIR/frontend.pid"))"
-fi
-
-echo "Started services (React frontend):"
-echo "  - postgres: port $PGPORT"
-echo "  - backend:  $BACKEND_PORT ($backend_status)"
-echo "  - frontend: $FRONTEND_PORT ($frontend_status)"
+log_info "服务启动完成。"
+log_info "Frontend: http://localhost:$FRONTEND_PORT"
+log_info "Backend:  http://localhost:$BACKEND_PORT"
+log_info "Postgres: localhost:$POSTGRES_PORT"
