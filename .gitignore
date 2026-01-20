@@ -8,6 +8,7 @@ node_modules/
 .ruff_cache/
 .pytest_cache/
 npm-debug.log*
+data/
 
 AGENTS.md
 CLAUDE.md

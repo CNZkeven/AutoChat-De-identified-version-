@@ -2,10 +2,13 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import SQLAlchemyError
 
 from .config import CORS_ORIGINS
-from .db import Base, engine
+from .db import Base, SessionLocal, engine
+from .models import User
 from .routers import auth, chat, conversations, courses, export, knowledge, memory, rag, tools
+from .security import hash_password
 
 logging.basicConfig(level=logging.INFO)
 
@@ -22,6 +25,23 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup() -> None:
     Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        demo_user = db.query(User).filter(User.username == "demo").first()
+        if not demo_user:
+            db.add(
+                User(
+                    username="demo",
+                    email=None,
+                    hashed_password=hash_password("demo@Just"),
+                )
+            )
+            db.commit()
+    except SQLAlchemyError:
+        logging.exception("Failed to ensure demo user exists")
+        db.rollback()
+    finally:
+        db.close()
 
 
 app.include_router(auth.router)

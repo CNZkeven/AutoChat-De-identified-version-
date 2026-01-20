@@ -143,6 +143,10 @@ class Tool(Base):
     name = Column(String(255), unique=True, nullable=False, index=True)
     description = Column(String(1000), nullable=False)
     parameters_schema = Column(JSONB, nullable=False)
+    output_schema = Column(JSONB, nullable=True)
+    auth_scope = Column(String(40), nullable=True)
+    rate_limit = Column(String(40), nullable=True)
+    safety_filter = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (Index("idx_tool_name", "name"),)
@@ -214,4 +218,22 @@ class CourseLog(Base):
     new_value = Column(Text, nullable=True)
     operator = Column(String(100), nullable=True)
     reason = Column(String(200), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AgentRun(Base):
+    __tablename__ = "agent_runs"
+
+    id = Column(Integer, primary_key=True)
+    agent = Column(String(40), nullable=False, index=True)
+    user_id = Column(Integer, nullable=True, index=True)
+    conversation_id = Column(Integer, nullable=True, index=True)
+    profile_id = Column(String(100), nullable=True)
+    profile_version = Column(String(40), nullable=True)
+    request_text = Column(Text, nullable=True)
+    plan_json = Column(JSONB, nullable=True)
+    tool_summary = Column(JSONB, nullable=True)
+    final_answer = Column(Text, nullable=True)
+    latency_ms = Column(Integer, nullable=True)
+    cost = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

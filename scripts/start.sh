@@ -97,14 +97,24 @@ else
     log_info "Started local PostgreSQL (data dir: $PGDATA, port: $PGPORT)."
 fi
 
-if command -v createdb >/dev/null 2>&1; then
+db_exists=false
+if command -v psql >/dev/null 2>&1; then
+    db_exists_value="$(psql -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='autochat'" 2>/dev/null | tr -d '[:space:]')"
+    if [ "$db_exists_value" = "1" ]; then
+        db_exists=true
+    fi
+fi
+
+if [ "$db_exists" = true ]; then
+    log_info "Database 'autochat' already exists; skipping creation."
+elif command -v createdb >/dev/null 2>&1; then
     if createdb -p "$PGPORT" autochat >> "$LOG_DIR/postgres.log" 2>&1; then
-        log_info "Ensured database 'autochat' exists."
+        log_info "Created database 'autochat'."
     else
-        log_warn "createdb failed (database may already exist or permission denied). See $LOG_DIR/postgres.log."
+        log_warn "createdb failed (permission denied or other error). See $LOG_DIR/postgres.log."
     fi
 else
-    log_warn "createdb not found; skipping database creation."
+    log_warn "psql/createdb not found; skipping database creation."
 fi
 
 : "${DATABASE_URL:=postgresql+psycopg://localhost:${PGPORT}/autochat}"

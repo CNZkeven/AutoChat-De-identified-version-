@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
@@ -11,9 +12,25 @@ from ..db import SessionLocal, get_db
 from ..deps import get_optional_user
 from ..models import Conversation, Message, User
 from ..schemas import ChatMessage, ChatRequest
-from ..services.ai import call_ai_model_stream
+from ..services.agent_profiles import (
+    get_agent_allowed_tools_from_profile,
+    get_agent_profile,
+)
+from ..services.agent_prompts import get_agent_allowed_tools, get_agent_system_prompt
+from ..services.agent_router import resolve_agent
+from ..services.agent_run_logger import write_agent_run
 from ..services.memory import fetch_latest_memory_summary, generate_memory_summary
+from ..services.orchestrator import (
+    build_missing_slots_question,
+    execute_plan,
+    identify_missing_slots,
+    plan_with_tools,
+    stream_without_tools,
+    synthesize_with_tools,
+)
 from ..services.title import generate_conversation_title
+from ..services.tool_logging import write_agent_log
+from ..services.tool_registry import load_tool_registry
 
 logger = logging.getLogger(__name__)
 
@@ -89,10 +106,22 @@ def _build_selected_hint(messages: list[dict], selected_messages: list[dict]) ->
     return merged
 
 
-def _attach_memory_prompt(messages: list[dict], memory_summary: str | None, agent_title: str) -> list[dict]:
-    system_parts = [f"你是{agent_title}。"]
+def _attach_memory_prompt(
+    messages: list[dict],
+    memory_summary: str | None,
+    agent_title: str,
+    agent: str,
+    user_id: int | None,
+) -> list[dict]:
+    system_prompt = get_agent_system_prompt(agent)
+    if system_prompt:
+        system_parts = [system_prompt]
+    else:
+        system_parts = [f"你是{agent_title}。"]
     if memory_summary:
         system_parts.append("用户记忆摘要：\n" + memory_summary)
+    if user_id is not None:
+        system_parts.append(f"当前用户ID：{user_id}（用于工具调用）")
     if system_parts:
         return [{"role": "system", "content": "\n\n".join(system_parts)}] + messages
     return messages
@@ -139,15 +168,6 @@ def chat(
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_user),
 ):
-    agent_config = AGENT_CONFIG.get(agent)
-    if not agent_config:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown agent")
-
-    api_key, base_url = get_agent_credentials(agent)
-    model_name = get_agent_model(agent)
-    if not api_key or not base_url or not model_name:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="模型未配置")
-
     messages = _validate_messages(payload.messages, "messages")
     selected_messages = _validate_messages(payload.selected_messages, "selected_messages")
     if not messages and payload.message:
@@ -159,70 +179,209 @@ def chat(
     if messages[-1]["role"] != "user":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Last message must be from user")
 
+    resolved_agent = agent
+    if agent in {"auto", "router"}:
+        last_user_content = messages[-1]["content"] if messages else (payload.message or "")
+        decision = resolve_agent(
+            last_user_content,
+            list(AGENT_CONFIG.keys()),
+            default_agent="ideological",
+        )
+        resolved_agent = decision.get("agent_id", "ideological")
+        write_agent_log(
+            {
+                "event": "routing_decision",
+                "agent": resolved_agent,
+                "conversation_id": None,
+                "user_id": current_user.id if current_user else None,
+                "decision": decision,
+            }
+        )
+        if decision.get("missing_slots"):
+            clarify_text = build_missing_slots_question(decision.get("missing_slots"))
+            return StreamingResponse(
+                iter([f"data: {json.dumps({'content': clarify_text})}\\n\\n"]),
+                media_type="text/event-stream",
+            )
+
+    agent_config = AGENT_CONFIG.get(resolved_agent)
+    if not agent_config:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown agent")
+
+    api_key, base_url = get_agent_credentials(resolved_agent)
+    model_name = get_agent_model(resolved_agent)
+    if not api_key or not base_url or not model_name:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="模型未配置")
+
     is_guest = current_user is None
     if not is_guest and payload.conversation_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="conversation_id is required")
 
     if not is_guest:
-        convo = _get_conversation(db, payload.conversation_id, current_user.id, agent)
+        convo = _get_conversation(db, payload.conversation_id, current_user.id, resolved_agent)
         _add_message(db, convo.id, "user", messages[-1]["content"], current_user.id)
-        memory_summary = fetch_latest_memory_summary(db, current_user.id, agent)
+        memory_summary = fetch_latest_memory_summary(db, current_user.id, resolved_agent)
     else:
         convo = None
         memory_summary = None
+
+    profile = get_agent_profile(resolved_agent)
+    profile_id = profile.get("id") if profile else None
+    profile_version = profile.get("version") if profile else None
+    if profile:
+        write_agent_log(
+            {
+                "event": "agent_profile",
+                "agent": resolved_agent,
+                "conversation_id": convo.id if convo else None,
+                "user_id": current_user.id if current_user else None,
+                "profile_id": profile_id,
+                "profile_version": profile_version,
+                "allow_tools": sorted(list(profile.get("allow_tools", []))),
+                "scope": profile.get("scope"),
+            }
+        )
     messages_with_hint = _build_selected_hint(messages, selected_messages)
     messages_to_model = _attach_memory_prompt(
-        messages_with_hint, memory_summary, agent_config.get("title", agent)
+        messages_with_hint,
+        memory_summary,
+        agent_config.get("title", resolved_agent),
+        resolved_agent,
+        current_user.id if current_user else None,
     )
 
     def event_generator():
+        start_time = time.monotonic()
         assistant_chunks: list[str] = []
-        if is_guest:
-            try:
-                for chunk in call_ai_model_stream(
-                    model_name, messages_to_model, api_key=api_key, base_url=base_url
-                ):
-                    if not chunk:
-                        continue
-                    assistant_chunks.append(chunk)
-                    yield f"data: {json.dumps({'content': chunk})}\n\n"
-            except Exception:
-                logger.exception("Guest chat stream failed")
-                yield f"data: {json.dumps({'error': 'service unavailable'})}\n\n"
-            return
-
         assistant_message_id = None
         stream_completed = False
+        convo_id = convo.id if convo else None
+        user_id = current_user.id if current_user else None
+        plan_json = None
+        tool_summary = None
+
+        def emit_chunk(chunk: str, stream_db: Session | None = None) -> str:
+            nonlocal assistant_message_id
+            assistant_chunks.append(chunk)
+            full_text = "".join(assistant_chunks)
+            if stream_db and convo:
+                if assistant_message_id is None:
+                    message = _add_message(stream_db, convo.id, "assistant", full_text, None)
+                    assistant_message_id = message.id
+                else:
+                    stream_db.query(Message).filter(Message.id == assistant_message_id).update(
+                        {Message.content: full_text}
+                    )
+                    stream_db.query(Conversation).filter(Conversation.id == convo.id).update(
+                        {Conversation.updated_at: datetime.utcnow()}
+                    )
+                    stream_db.commit()
+            return f"data: {json.dumps({'content': chunk})}\n\n"
+
         with SessionLocal() as stream_db:
             try:
-                for chunk in call_ai_model_stream(
-                    model_name, messages_to_model, api_key=api_key, base_url=base_url
-                ):
+                registry = load_tool_registry(stream_db)
+                allowed_tools = get_agent_allowed_tools_from_profile(resolved_agent) or get_agent_allowed_tools(
+                    resolved_agent
+                )
+                if allowed_tools:
+                    registry = registry.__class__(
+                        {name: definition for name, definition in registry.tools.items() if name in allowed_tools}
+                    )
+                tools_payload = registry.to_openai_tools()
+                messages_for_round = messages_to_model
+                tool_calls: list[dict] = []
+                assistant_content = ""
+
+                if tools_payload:
+                    assistant_content, tool_calls, _, _, plan_json = plan_with_tools(
+                        messages_for_round,
+                        tools_payload,
+                        model_name,
+                        api_key,
+                        base_url,
+                        registry,
+                        resolved_agent,
+                        user_id,
+                        convo_id,
+                    )
+
+                missing_slots = identify_missing_slots(tool_calls, registry)
+                if missing_slots:
+                    write_agent_log(
+                        {
+                            "event": "missing_slots",
+                            "agent": resolved_agent,
+                            "conversation_id": convo_id,
+                            "user_id": user_id,
+                            "missing_slots": missing_slots,
+                        }
+                    )
+                    clarify_text = build_missing_slots_question(missing_slots)
+                    chunk_iter = [clarify_text]
+                elif tool_calls:
+                    tool_results, tool_summary = execute_plan(
+                        tool_calls, registry, stream_db, resolved_agent, user_id, convo_id
+                    )
+                    final_text = synthesize_with_tools(
+                        messages_for_round,
+                        assistant_content,
+                        tool_calls,
+                        tool_results,
+                        model_name,
+                        api_key,
+                        base_url,
+                        resolved_agent,
+                    )
+                    chunk_iter = [final_text] if final_text else []
+                else:
+                    chunk_iter = [assistant_content] if assistant_content else stream_without_tools(
+                        model_name, messages_for_round, api_key=api_key, base_url=base_url
+                    )
+
+                sent_any = False
+                for chunk in chunk_iter:
                     if not chunk:
                         continue
-                    assistant_chunks.append(chunk)
-                    full_text = "".join(assistant_chunks)
-                    if assistant_message_id is None:
-                        message = _add_message(stream_db, convo.id, "assistant", full_text, None)
-                        assistant_message_id = message.id
+                    sent_any = True
+                    if is_guest:
+                        yield f"data: {json.dumps({'content': chunk})}\n\n"
                     else:
-                        stream_db.query(Message).filter(Message.id == assistant_message_id).update(
-                            {Message.content: full_text}
-                        )
-                        stream_db.query(Conversation).filter(Conversation.id == convo.id).update(
-                            {Conversation.updated_at: datetime.utcnow()}
-                        )
-                        stream_db.commit()
-                    yield f"data: {json.dumps({'content': chunk})}\n\n"
-                stream_completed = True
+                        yield emit_chunk(chunk, stream_db)
+                if sent_any:
+                    stream_completed = True
+                if not stream_completed:
+                    yield f"data: {json.dumps({'error': 'tool_call_loop'})}\n\n"
             except Exception:
                 logger.exception("Chat stream failed")
                 yield f"data: {json.dumps({'error': 'service unavailable'})}\n\n"
 
             # Trigger memory summarization after successful completion
-            if stream_completed:
+            if stream_completed and not is_guest:
                 try:
-                    generate_memory_summary(stream_db, current_user.id, agent)
+                    final_answer = "".join(assistant_chunks) if assistant_chunks else None
+                    latency_ms = int((time.monotonic() - start_time) * 1000)
+                    write_agent_run(
+                        stream_db,
+                        {
+                            "agent": resolved_agent,
+                            "user_id": user_id,
+                            "conversation_id": convo_id,
+                            "profile_id": profile_id,
+                            "profile_version": profile_version,
+                            "request_text": messages[-1]["content"] if messages else None,
+                            "plan_json": plan_json,
+                            "tool_summary": tool_summary,
+                            "final_answer": final_answer,
+                            "latency_ms": latency_ms,
+                            "cost": None,
+                        },
+                    )
+                except Exception:
+                    logger.exception("Agent run logging failed (non-blocking)")
+
+                try:
+                    generate_memory_summary(stream_db, current_user.id, resolved_agent)
                 except Exception:
                     logger.exception("Memory summarization failed (non-blocking)")
 
