@@ -1,49 +1,51 @@
 # AutoChat
 
-## Overview
-AutoChat is a full-stack app with a React (Vite) frontend, a FastAPI backend, and a Postgres database.
+## 项目简介（给非计算机同学看的版本）
+AutoChat 是一个“对话式智能体系统”。你可以在网页里和不同类型的智能体聊天，
+例如：思政、任务、探究、竞赛、课程、评价等。系统会保存聊天记录，方便回看和评估。
 
-## Quick Start (Docker, recommended)
-1. Install Docker Desktop.
-2. Create a local env file:
-   - macOS/Linux: `cp .env.example .env`
-   - Windows PowerShell: `Copy-Item .env.example .env`
-3. Start the stack:
-   - macOS/Linux: `./scripts/start.sh`
-   - Windows PowerShell: `.\scripts\dev.ps1`
-   - or `docker compose up --build`
+## 系统都包含什么
+- **前端网页**：你在浏览器里看到的聊天界面。
+- **后端服务**：负责处理登录、对话、保存记录。
+- **数据库**：保存账号、对话和运行记录。
 
-After startup:
-- Frontend: http://localhost:5173
-- Backend: http://localhost:8000
-- Health check: http://localhost:8000/health
-- Postgres: localhost:5433（默认，脚本会在 5433-5499 内自动选择可用端口）
+## 一键启动（推荐：Docker）
+> 适合团队协作，不需要你本机安装数据库。
 
-## Daily Development
-- Start only Postgres: `docker compose up -d db`
-- Rebuild a service: `docker compose build backend`
-- View logs: `docker compose logs -f backend`
-- Stop services: `./scripts/stop.sh` or `docker compose down`
-- 端口自动选择记录在 `.logs/compose-ports.env`
+1. 安装 Docker Desktop。
+2. 在项目根目录创建 `.env` 文件：
+   - macOS / Linux：`cp .env.example .env`
+   - Windows PowerShell：`Copy-Item .env.example .env`
+3. 启动：
+   - macOS / Linux：`./scripts/start.sh`
+   - Windows PowerShell：`\scripts\dev.ps1`
+   - 也可以直接用：`docker compose up --build`
 
-## Database initialization / migrations
-- This project does not use Alembic yet.
-- Tables are created on backend startup via SQLAlchemy metadata.
-- To reset local data: `docker compose down -v` (destroys the Postgres volume).
+启动成功后访问：
+- 前端：http://localhost:5173
+- 后端：http://localhost:8000
+- 健康检查：http://localhost:8000/health
+- 数据库：默认 5433（脚本会在 5433-5499 内自动找可用端口）
 
-## Windows troubleshooting
-- Port conflicts: update `POSTGRES_PORT`, `BACKEND_PORT`, or `FRONTEND_PORT` in `.env`.
-- File sharing/performance: ensure the repo directory is shared in Docker Desktop settings.
-- Script execution policy: if PowerShell blocks scripts, run
-  `Set-ExecutionPolicy -Scope Process Bypass` and then `.\scripts\dev.ps1`.
+**端口自动选择记录在：** `.logs/compose-ports.env`
 
-## Local development (without Docker)
-- 当前推荐使用 Docker Compose；如需本机直跑，请自行配置 `backend/.env` 与依赖版本。
+## 如何停止
+- `./scripts/stop.sh`
+- 或 `docker compose down`
 
-## Developer scripts
-- macOS/Linux: `./scripts/dev.sh`
-- Windows PowerShell: `.\scripts\dev.ps1`
+## 常见问题（简明版）
+1. **页面打不开**：先确认 Docker Desktop 是否正在运行。
+2. **端口被占用**：脚本会自动换端口；如仍失败，请关闭占用端口的程序后重试。
+3. **Windows 无法执行脚本**：在 PowerShell 里运行：
+   `Set-ExecutionPolicy -Scope Process Bypass`，然后再执行 `\scripts\dev.ps1`。
 
-## Lint / build
+## 不使用 Docker 的情况
+目前推荐统一使用 Docker；如需本机直跑，请自行配置 `backend/.env` 与依赖环境。
+
+## 开发者脚本
+- macOS / Linux：`./scripts/dev.sh`
+- Windows PowerShell：`\scripts\dev.ps1`
+
+## 代码检查与构建
 - `./scripts/lint.sh`
 - `./scripts/build.sh`
