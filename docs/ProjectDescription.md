@@ -11,7 +11,7 @@ tool contracts and sanitization, Redis-backed caching for tool reads, and agent 
 - Recommended cross-platform dev entrypoint: `cp .env.example .env` then `./scripts/start.sh` (or `docker compose up --build`).
 - Services include Postgres, FastAPI backend, and the Vite React frontend.
 - Backend health check endpoint: `GET /health`.
-- `scripts/start.sh` 会自动选择可用端口并记录到 `.logs/compose-ports.env`。
+- `scripts/start.sh` 会在 5433-5499 范围内自动选择可用端口并记录到 `.logs/compose-ports.env`。
 
 ## React Frontend Notes
 - Uses Vite dev server. `VITE_API_URL` points to backend.

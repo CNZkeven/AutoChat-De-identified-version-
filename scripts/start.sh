@@ -36,6 +36,18 @@ check_port_listening() {
     return 2
 }
 
+is_port_available() {
+    local port="$1"
+    if check_port_listening "$port"; then
+        return 1
+    fi
+    local status=$?
+    if [ "$status" -eq 2 ]; then
+        log_warn "无法检查端口 $port（缺少 lsof/nc），尝试继续使用。"
+    fi
+    return 0
+}
+
 add_candidate() {
     local value="$1"
     local list_name="$2"
@@ -59,15 +71,23 @@ find_available_port() {
         if [ -z "$port" ]; then
             continue
         fi
-        if check_port_listening "$port"; then
-            continue
+        if is_port_available "$port"; then
+            echo "$port"
+            return 0
         fi
-        local status=$?
-        if [ "$status" -eq 2 ]; then
-            log_warn "无法检查端口 $port（缺少 lsof/nc），尝试继续使用。"
+    done
+    return 1
+}
+
+find_available_port_in_range() {
+    local start="$1"
+    local end="$2"
+    local port
+    for port in $(seq "$start" "$end"); do
+        if is_port_available "$port"; then
+            echo "$port"
+            return 0
         fi
-        echo "$port"
-        return 0
     done
     return 1
 }
@@ -112,6 +132,12 @@ fi
 DEFAULT_POSTGRES_PORT="${POSTGRES_PORT:-5433}"
 DEFAULT_BACKEND_PORT="${BACKEND_PORT:-8000}"
 DEFAULT_FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+POSTGRES_PORT_MIN=5433
+POSTGRES_PORT_MAX=5499
+BACKEND_PORT_MIN=8000
+BACKEND_PORT_MAX=8099
+FRONTEND_PORT_MIN=5173
+FRONTEND_PORT_MAX=5199
 
 if compose ps --services --status running 2>/dev/null | grep -qx "db"; then
     POSTGRES_PORT="$(get_compose_port db 5432)"
@@ -119,41 +145,58 @@ if compose ps --services --status running 2>/dev/null | grep -qx "db"; then
     FRONTEND_PORT="$(get_compose_port frontend 5173)"
 fi
 
+if [ -n "${POSTGRES_PORT:-}" ] && ! is_port_available "$POSTGRES_PORT"; then
+    log_warn "端口 $POSTGRES_PORT 已被占用，尝试在 ${POSTGRES_PORT_MIN}-${POSTGRES_PORT_MAX} 内选择可用端口。"
+    POSTGRES_PORT=""
+fi
+
 if [ -z "${POSTGRES_PORT:-}" ]; then
     candidates=()
     add_candidate "${LAST_POSTGRES_PORT:-}" candidates
     add_candidate "$DEFAULT_POSTGRES_PORT" candidates
-    add_candidate "5432" candidates
-    add_candidate "15432" candidates
-    add_candidate "25432" candidates
-    POSTGRES_PORT="$(find_available_port "${candidates[@]}")" || {
-        log_error "未找到可用的 Postgres 端口。"
-        exit 1
-    }
+    POSTGRES_PORT="$(find_available_port "${candidates[@]}")" || POSTGRES_PORT=""
+    if [ -z "$POSTGRES_PORT" ]; then
+        POSTGRES_PORT="$(find_available_port_in_range "$POSTGRES_PORT_MIN" "$POSTGRES_PORT_MAX")" || {
+            log_error "未找到可用的 Postgres 端口（${POSTGRES_PORT_MIN}-${POSTGRES_PORT_MAX}）。"
+            exit 1
+        }
+    fi
+fi
+
+if [ -n "${BACKEND_PORT:-}" ] && ! is_port_available "$BACKEND_PORT"; then
+    log_warn "端口 $BACKEND_PORT 已被占用，尝试在 ${BACKEND_PORT_MIN}-${BACKEND_PORT_MAX} 内选择可用端口。"
+    BACKEND_PORT=""
 fi
 
 if [ -z "${BACKEND_PORT:-}" ]; then
     candidates=()
     add_candidate "${LAST_BACKEND_PORT:-}" candidates
     add_candidate "$DEFAULT_BACKEND_PORT" candidates
-    add_candidate "8001" candidates
-    add_candidate "18000" candidates
-    BACKEND_PORT="$(find_available_port "${candidates[@]}")" || {
-        log_error "未找到可用的后端端口。"
-        exit 1
-    }
+    BACKEND_PORT="$(find_available_port "${candidates[@]}")" || BACKEND_PORT=""
+    if [ -z "$BACKEND_PORT" ]; then
+        BACKEND_PORT="$(find_available_port_in_range "$BACKEND_PORT_MIN" "$BACKEND_PORT_MAX")" || {
+            log_error "未找到可用的后端端口（${BACKEND_PORT_MIN}-${BACKEND_PORT_MAX}）。"
+            exit 1
+        }
+    fi
+fi
+
+if [ -n "${FRONTEND_PORT:-}" ] && ! is_port_available "$FRONTEND_PORT"; then
+    log_warn "端口 $FRONTEND_PORT 已被占用，尝试在 ${FRONTEND_PORT_MIN}-${FRONTEND_PORT_MAX} 内选择可用端口。"
+    FRONTEND_PORT=""
 fi
 
 if [ -z "${FRONTEND_PORT:-}" ]; then
     candidates=()
     add_candidate "${LAST_FRONTEND_PORT:-}" candidates
     add_candidate "$DEFAULT_FRONTEND_PORT" candidates
-    add_candidate "5174" candidates
-    add_candidate "15173" candidates
-    FRONTEND_PORT="$(find_available_port "${candidates[@]}")" || {
-        log_error "未找到可用的前端端口。"
-        exit 1
-    }
+    FRONTEND_PORT="$(find_available_port "${candidates[@]}")" || FRONTEND_PORT=""
+    if [ -z "$FRONTEND_PORT" ]; then
+        FRONTEND_PORT="$(find_available_port_in_range "$FRONTEND_PORT_MIN" "$FRONTEND_PORT_MAX")" || {
+            log_error "未找到可用的前端端口（${FRONTEND_PORT_MIN}-${FRONTEND_PORT_MAX}）。"
+            exit 1
+        }
+    fi
 fi
 
 if check_port_listening "$POSTGRES_PORT" && ! (compose ps --services --status running 2>/dev/null | grep -qx "db"); then

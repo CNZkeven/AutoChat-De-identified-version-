@@ -17,7 +17,7 @@ After startup:
 - Frontend: http://localhost:5173
 - Backend: http://localhost:8000
 - Health check: http://localhost:8000/health
-- Postgres: localhost:5433（默认，脚本会自动选择可用端口）
+- Postgres: localhost:5433（默认，脚本会在 5433-5499 内自动选择可用端口）
 
 ## Daily Development
 - Start only Postgres: `docker compose up -d db`
