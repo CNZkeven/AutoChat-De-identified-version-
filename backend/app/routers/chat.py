@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
@@ -11,11 +12,23 @@ from ..db import SessionLocal, get_db
 from ..deps import get_optional_user
 from ..models import Conversation, Message, User
 from ..schemas import ChatMessage, ChatRequest
+from ..services.agent_profiles import (
+    get_agent_allowed_tools_from_profile,
+    get_agent_profile,
+)
 from ..services.agent_prompts import get_agent_allowed_tools, get_agent_system_prompt
-from ..services.ai import call_ai_model, call_ai_model_stream, call_ai_model_with_tools
+from ..services.agent_router import resolve_agent
+from ..services.agent_run_logger import write_agent_run
 from ..services.memory import fetch_latest_memory_summary, generate_memory_summary
+from ..services.orchestrator import (
+    build_missing_slots_question,
+    execute_plan,
+    identify_missing_slots,
+    plan_with_tools,
+    stream_without_tools,
+    synthesize_with_tools,
+)
 from ..services.title import generate_conversation_title
-from ..services.tool_executor import execute_tool_calls
 from ..services.tool_logging import write_agent_log
 from ..services.tool_registry import load_tool_registry
 
@@ -114,124 +127,6 @@ def _attach_memory_prompt(
     return messages
 
 
-def _build_tool_messages(
-    tool_calls: list[dict],
-    tool_results: list[dict],
-    assistant_content: str,
-) -> tuple[dict, list[dict]]:
-    tool_call_payload = []
-    for index, call in enumerate(tool_calls, start=1):
-        call_id = call.get("id") or f"json-fallback-{index}"
-        tool_call_payload.append(
-            {
-                "id": call_id,
-                "type": "function",
-                "function": {
-                    "name": call.get("name"),
-                    "arguments": json.dumps(call.get("args", {}), ensure_ascii=False),
-                },
-            }
-        )
-        call["id"] = call_id
-    assistant_message = {
-        "role": "assistant",
-        "content": assistant_content or "",
-        "tool_calls": tool_call_payload,
-    }
-    tool_messages = []
-    for index, result in enumerate(tool_results, start=1):
-        tool_call_id = result.get("id") or f"json-fallback-{index}"
-        tool_messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": json.dumps(result.get("result", {}), ensure_ascii=False),
-            }
-        )
-    return assistant_message, tool_messages
-
-
-def _extract_json_payload(content: str) -> str | None:
-    if not content:
-        return None
-    trimmed = content.strip()
-    if trimmed.startswith("{") or trimmed.startswith("["):
-        return trimmed
-    if "```" not in content:
-        return None
-    parts = content.split("```")
-    if len(parts) < 3:
-        return None
-    candidate = parts[1]
-    if "\n" in candidate:
-        candidate = candidate.split("\n", 1)[1]
-    return candidate.strip()
-
-
-def _parse_json_tool_calls(content: str) -> list[dict]:
-    payload = _extract_json_payload(content)
-    if not payload:
-        return []
-    try:
-        data = json.loads(payload)
-    except Exception:
-        return []
-    calls: list[dict] = []
-    if isinstance(data, dict):
-        if "tool" in data and "args" in data:
-            calls.append({"id": None, "name": data.get("tool"), "args": data.get("args", {})})
-        if isinstance(data.get("tool_calls"), list):
-            for item in data["tool_calls"]:
-                if isinstance(item, dict) and "tool" in item and "args" in item:
-                    calls.append(
-                        {"id": item.get("id"), "name": item.get("tool"), "args": item.get("args", {})}
-                    )
-        return calls
-    if isinstance(data, list):
-        for item in data:
-            if isinstance(item, dict) and "tool" in item and "args" in item:
-                calls.append({"id": item.get("id"), "name": item.get("tool"), "args": item.get("args", {})})
-    return calls
-
-
-def _augment_tool_calls(agent: str, messages: list[dict], tool_calls: list[dict]) -> list[dict]:
-    if agent != "ideological":
-        return tool_calls
-    last_user = ""
-    for msg in reversed(messages):
-        if msg.get("role") == "user":
-            last_user = msg.get("content", "")
-            break
-    has_search = any(call.get("name") == "search_knowledge_repository" for call in tool_calls)
-    if has_search or not last_user:
-        return tool_calls
-    keywords = last_user.strip()[:80]
-    augmented = list(tool_calls)
-    augmented.append(
-        {
-            "id": None,
-            "name": "search_knowledge_repository",
-            "args": {"source": "internal_kb", "query_type": "tech_evolution", "keywords": keywords},
-        }
-    )
-    augmented.append(
-        {
-            "id": None,
-            "name": "search_knowledge_repository",
-            "args": {"source": "internal_kb", "query_type": "spirit_genealogy", "keywords": keywords},
-        }
-    )
-    if any(key in last_user for key in ["工程", "项目", "航母", "LNG", "大国重器"]):
-        augmented.append(
-            {
-                "id": None,
-                "name": "search_knowledge_repository",
-                "args": {"source": "internal_kb", "query_type": "engineering_projects", "keywords": keywords},
-            }
-        )
-    return augmented
-
-
 def _get_conversation(db: Session, conversation_id: int, user_id: int, agent: str) -> Conversation:
     convo = (
         db.query(Conversation)
@@ -273,15 +168,6 @@ def chat(
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_user),
 ):
-    agent_config = AGENT_CONFIG.get(agent)
-    if not agent_config:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown agent")
-
-    api_key, base_url = get_agent_credentials(agent)
-    model_name = get_agent_model(agent)
-    if not api_key or not base_url or not model_name:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="模型未配置")
-
     messages = _validate_messages(payload.messages, "messages")
     selected_messages = _validate_messages(payload.selected_messages, "selected_messages")
     if not messages and payload.message:
@@ -293,32 +179,86 @@ def chat(
     if messages[-1]["role"] != "user":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Last message must be from user")
 
+    resolved_agent = agent
+    if agent in {"auto", "router"}:
+        last_user_content = messages[-1]["content"] if messages else (payload.message or "")
+        decision = resolve_agent(
+            last_user_content,
+            list(AGENT_CONFIG.keys()),
+            default_agent="ideological",
+        )
+        resolved_agent = decision.get("agent_id", "ideological")
+        write_agent_log(
+            {
+                "event": "routing_decision",
+                "agent": resolved_agent,
+                "conversation_id": None,
+                "user_id": current_user.id if current_user else None,
+                "decision": decision,
+            }
+        )
+        if decision.get("missing_slots"):
+            clarify_text = build_missing_slots_question(decision.get("missing_slots"))
+            return StreamingResponse(
+                iter([f"data: {json.dumps({'content': clarify_text})}\\n\\n"]),
+                media_type="text/event-stream",
+            )
+
+    agent_config = AGENT_CONFIG.get(resolved_agent)
+    if not agent_config:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown agent")
+
+    api_key, base_url = get_agent_credentials(resolved_agent)
+    model_name = get_agent_model(resolved_agent)
+    if not api_key or not base_url or not model_name:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="模型未配置")
+
     is_guest = current_user is None
     if not is_guest and payload.conversation_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="conversation_id is required")
 
     if not is_guest:
-        convo = _get_conversation(db, payload.conversation_id, current_user.id, agent)
+        convo = _get_conversation(db, payload.conversation_id, current_user.id, resolved_agent)
         _add_message(db, convo.id, "user", messages[-1]["content"], current_user.id)
-        memory_summary = fetch_latest_memory_summary(db, current_user.id, agent)
+        memory_summary = fetch_latest_memory_summary(db, current_user.id, resolved_agent)
     else:
         convo = None
         memory_summary = None
+
+    profile = get_agent_profile(resolved_agent)
+    profile_id = profile.get("id") if profile else None
+    profile_version = profile.get("version") if profile else None
+    if profile:
+        write_agent_log(
+            {
+                "event": "agent_profile",
+                "agent": resolved_agent,
+                "conversation_id": convo.id if convo else None,
+                "user_id": current_user.id if current_user else None,
+                "profile_id": profile_id,
+                "profile_version": profile_version,
+                "allow_tools": sorted(list(profile.get("allow_tools", []))),
+                "scope": profile.get("scope"),
+            }
+        )
     messages_with_hint = _build_selected_hint(messages, selected_messages)
     messages_to_model = _attach_memory_prompt(
         messages_with_hint,
         memory_summary,
-        agent_config.get("title", agent),
-        agent,
+        agent_config.get("title", resolved_agent),
+        resolved_agent,
         current_user.id if current_user else None,
     )
 
     def event_generator():
+        start_time = time.monotonic()
         assistant_chunks: list[str] = []
         assistant_message_id = None
         stream_completed = False
         convo_id = convo.id if convo else None
         user_id = current_user.id if current_user else None
+        plan_json = None
+        tool_summary = None
 
         def emit_chunk(chunk: str, stream_db: Session | None = None) -> str:
             nonlocal assistant_message_id
@@ -341,7 +281,9 @@ def chat(
         with SessionLocal() as stream_db:
             try:
                 registry = load_tool_registry(stream_db)
-                allowed_tools = get_agent_allowed_tools(agent)
+                allowed_tools = get_agent_allowed_tools_from_profile(resolved_agent) or get_agent_allowed_tools(
+                    resolved_agent
+                )
                 if allowed_tools:
                     registry = registry.__class__(
                         {name: definition for name, definition in registry.tools.items() if name in allowed_tools}
@@ -349,66 +291,51 @@ def chat(
                 tools_payload = registry.to_openai_tools()
                 messages_for_round = messages_to_model
                 tool_calls: list[dict] = []
-                raw_tool_calls: list[dict] = []
                 assistant_content = ""
-                used_json_fallback = False
 
                 if tools_payload:
-                    assistant_content, tool_calls, raw_tool_calls = call_ai_model_with_tools(
-                        model_name,
+                    assistant_content, tool_calls, _, _, plan_json = plan_with_tools(
                         messages_for_round,
-                        api_key=api_key,
-                        base_url=base_url,
-                        tools=tools_payload,
+                        tools_payload,
+                        model_name,
+                        api_key,
+                        base_url,
+                        registry,
+                        resolved_agent,
+                        user_id,
+                        convo_id,
                     )
-                    if not tool_calls and assistant_content:
-                        tool_calls = _parse_json_tool_calls(assistant_content)
-                        used_json_fallback = bool(tool_calls)
 
-                    tool_calls = _augment_tool_calls(agent, messages_for_round, tool_calls)
-
+                missing_slots = identify_missing_slots(tool_calls, registry)
+                if missing_slots:
                     write_agent_log(
                         {
-                            "event": "tool_decision",
-                            "agent": agent,
+                            "event": "missing_slots",
+                            "agent": resolved_agent,
                             "conversation_id": convo_id,
                             "user_id": user_id,
-                            "tool_calls": raw_tool_calls,
-                            "assistant_content": assistant_content,
-                            "json_fallback": used_json_fallback,
+                            "missing_slots": missing_slots,
                         }
                     )
-
-                if tool_calls:
-                    tool_results = execute_tool_calls(
-                        tool_calls, registry, stream_db, agent, user_id, convo_id
+                    clarify_text = build_missing_slots_question(missing_slots)
+                    chunk_iter = [clarify_text]
+                elif tool_calls:
+                    tool_results, tool_summary = execute_plan(
+                        tool_calls, registry, stream_db, resolved_agent, user_id, convo_id
                     )
-                    assistant_message, tool_messages = _build_tool_messages(
-                        tool_calls, tool_results, assistant_content
+                    final_text = synthesize_with_tools(
+                        messages_for_round,
+                        assistant_content,
+                        tool_calls,
+                        tool_results,
+                        model_name,
+                        api_key,
+                        base_url,
+                        resolved_agent,
                     )
-                    final_messages = messages_for_round + [assistant_message] + tool_messages
-                    final_messages.append(
-                        {
-                            "role": "system",
-                            "content": "工具结果已提供，请基于工具结果给出最终回复，禁止再调用工具或输出工具调用格式。",
-                        }
-                    )
-                    final_text = call_ai_model(
-                        model_name, final_messages, api_key=api_key, base_url=base_url
-                    )
-                    if "<tool_call>" in final_text or "\"tool\"" in final_text:
-                        final_messages.append(
-                            {
-                                "role": "system",
-                                "content": "再次强调：直接给出最终回复，不要输出任何工具调用。",
-                            }
-                        )
-                        final_text = call_ai_model(
-                            model_name, final_messages, api_key=api_key, base_url=base_url
-                        )
                     chunk_iter = [final_text] if final_text else []
                 else:
-                    chunk_iter = [assistant_content] if assistant_content else call_ai_model_stream(
+                    chunk_iter = [assistant_content] if assistant_content else stream_without_tools(
                         model_name, messages_for_round, api_key=api_key, base_url=base_url
                     )
 
@@ -432,7 +359,29 @@ def chat(
             # Trigger memory summarization after successful completion
             if stream_completed and not is_guest:
                 try:
-                    generate_memory_summary(stream_db, current_user.id, agent)
+                    final_answer = "".join(assistant_chunks) if assistant_chunks else None
+                    latency_ms = int((time.monotonic() - start_time) * 1000)
+                    write_agent_run(
+                        stream_db,
+                        {
+                            "agent": resolved_agent,
+                            "user_id": user_id,
+                            "conversation_id": convo_id,
+                            "profile_id": profile_id,
+                            "profile_version": profile_version,
+                            "request_text": messages[-1]["content"] if messages else None,
+                            "plan_json": plan_json,
+                            "tool_summary": tool_summary,
+                            "final_answer": final_answer,
+                            "latency_ms": latency_ms,
+                            "cost": None,
+                        },
+                    )
+                except Exception:
+                    logger.exception("Agent run logging failed (non-blocking)")
+
+                try:
+                    generate_memory_summary(stream_db, current_user.id, resolved_agent)
                 except Exception:
                     logger.exception("Memory summarization failed (non-blocking)")
 
