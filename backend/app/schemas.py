@@ -209,3 +209,81 @@ class CourseOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class AdminUserOut(BaseModel):
+    id: int
+    username: str
+    email: str | None = None
+    is_active: bool | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class AdminUserProfileOut(BaseModel):
+    user_id: int
+    data: dict
+
+
+class AdminAgentOut(BaseModel):
+    id: str
+    title: str
+    greeting: str | None = None
+    profile: dict | None = None
+    prompt: str | None = None
+    prompt_template_path: str | None = None
+
+
+class AdminConversationOut(BaseModel):
+    id: int
+    user_id: int
+    title: str
+    agent: str
+    status: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class AdminRunSummaryOut(BaseModel):
+    id: int
+    agent_run_id: int | None = None
+    conversation_id: int | None = None
+    user_message_id: int | None = None
+    request_text: str | None = None
+    created_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class AdminRunDetailOut(BaseModel):
+    id: int
+    agent_run_id: int | None = None
+    conversation_id: int | None = None
+    user_message_id: int | None = None
+    request_text: str | None = None
+    trace: list[dict] = []
+    created_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class AdminDebugRunRequest(BaseModel):
+    user_id: int
+    agent: str
+    conversation_id: int | None = None
+    style: str | None = None
+    message: str | None = None
+    messages: list[ChatMessage] | None = None
+    selected_messages: list[ChatMessage] | None = None
+
+
+class AdminDebugRunResponse(BaseModel):
+    conversation_id: int
+    trace_id: int
+    final_text: str | None = None

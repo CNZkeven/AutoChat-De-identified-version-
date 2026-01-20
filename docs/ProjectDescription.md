@@ -36,12 +36,20 @@ tool contracts and sanitization, Redis-backed caching for tool reads, and agent 
 
 ## Agent Runs & Replay
 - Each completed authenticated chat run is recorded in `agent_runs` with plan JSON, tool summary, and final answer.
+- Full debug traces are recorded in `agent_run_traces`, including assembled prompts, tool calls, tool results, and final responses.
 - Replay data supports evaluation of tool accuracy, groundedness, latency, and cost.
 - Logs are written to `.logs/agents.log` for tool calls, plans, and run metadata.
+
+## Admin Debug Console
+- Admin UI: `frontend/admin.html` (tabbed user management placeholder + agent debug console).
+- Admin APIs: `/api/admin/*` provide user/agent listings, conversation runs, and trace details.
+- Debug run endpoint: `POST /api/admin/debug/run` executes a test command as the selected user and stores a full trace.
+- Prompt template location is exposed via admin agent metadata; system prompts live in `backend/app/services/agent_prompts.py`.
 
 ## Demo Account
 - Username: demo
 - Password: demo@Just
+- Admin: admin / admin@Just
 
 ## Environment Variables
 - `DATABASE_URL`, `JWT_SECRET_KEY`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `CORS_ORIGINS`

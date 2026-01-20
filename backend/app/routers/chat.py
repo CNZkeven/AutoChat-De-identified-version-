@@ -2,6 +2,7 @@ import json
 import logging
 import time
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from fastapi.responses import StreamingResponse
@@ -18,9 +19,11 @@ from ..services.agent_profiles import (
 )
 from ..services.agent_prompts import get_agent_allowed_tools, get_agent_system_prompt
 from ..services.agent_router import resolve_agent
-from ..services.agent_run_logger import write_agent_run
+from ..services.agent_run_logger import write_agent_run, write_agent_run_trace
 from ..services.memory import fetch_latest_memory_summary, generate_memory_summary
 from ..services.orchestrator import (
+    FINAL_TOOL_INSTRUCTION,
+    _build_tool_messages,
     build_missing_slots_question,
     execute_plan,
     identify_missing_slots,
@@ -62,6 +65,8 @@ AGENT_CONFIG = {
         "greeting": "我可以帮助你学习课程内容。",
     },
 }
+
+PROMPT_TEMPLATE_PATH = "backend/app/services/agent_prompts.py"
 
 
 def _validate_messages(messages: list[ChatMessage] | None, field_name: str) -> list[dict]:
@@ -180,6 +185,7 @@ def chat(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Last message must be from user")
 
     resolved_agent = agent
+    routing_decision = None
     if agent in {"auto", "router"}:
         last_user_content = messages[-1]["content"] if messages else (payload.message or "")
         decision = resolve_agent(
@@ -187,6 +193,7 @@ def chat(
             list(AGENT_CONFIG.keys()),
             default_agent="ideological",
         )
+        routing_decision = decision
         resolved_agent = decision.get("agent_id", "ideological")
         write_agent_log(
             {
@@ -217,9 +224,11 @@ def chat(
     if not is_guest and payload.conversation_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="conversation_id is required")
 
+    user_message_id = None
     if not is_guest:
         convo = _get_conversation(db, payload.conversation_id, current_user.id, resolved_agent)
-        _add_message(db, convo.id, "user", messages[-1]["content"], current_user.id)
+        user_message = _add_message(db, convo.id, "user", messages[-1]["content"], current_user.id)
+        user_message_id = user_message.id
         memory_summary = fetch_latest_memory_summary(db, current_user.id, resolved_agent)
     else:
         convo = None
@@ -249,6 +258,71 @@ def chat(
         resolved_agent,
         current_user.id if current_user else None,
     )
+    system_message = None
+    if messages_to_model and messages_to_model[0].get("role") == "system":
+        system_message = messages_to_model[0]
+    trace_seed: list[dict[str, Any]] = [
+        {
+            "type": "context",
+            "source": "request",
+            "agent": resolved_agent,
+            "profile_id": profile_id,
+            "profile_version": profile_version,
+            "user_id": current_user.id if current_user else None,
+            "conversation_id": convo.id if convo else None,
+            "user_message_id": user_message_id,
+        }
+    ]
+    if routing_decision:
+        trace_seed.append(
+            {
+                "type": "routing_decision",
+                "source": "router",
+                "decision": routing_decision,
+            }
+        )
+    if messages:
+        trace_seed.append(
+            {
+                "type": "user_message",
+                "source": "user",
+                "content": messages[-1]["content"],
+                "message_id": user_message_id,
+            }
+        )
+    if selected_messages:
+        trace_seed.append(
+            {
+                "type": "selected_messages",
+                "source": "user",
+                "messages": selected_messages,
+            }
+        )
+    if system_message:
+        trace_seed.append(
+            {
+                "type": "system_prompt",
+                "source": "agent_prompts",
+                "content": system_message.get("content", ""),
+                "template_path": PROMPT_TEMPLATE_PATH,
+                "agent": resolved_agent,
+            }
+        )
+    if memory_summary:
+        trace_seed.append(
+            {
+                "type": "memory_summary",
+                "source": "memory",
+                "content": memory_summary,
+            }
+        )
+    trace_seed.append(
+        {
+            "type": "assembled_messages",
+            "source": "orchestrator",
+            "messages": messages_to_model,
+        }
+    )
 
     def event_generator():
         start_time = time.monotonic()
@@ -259,6 +333,15 @@ def chat(
         user_id = current_user.id if current_user else None
         plan_json = None
         tool_summary = None
+        final_text: str | None = None
+        trace_events: list[dict[str, Any]] = []
+
+        def add_trace(event: dict[str, Any]) -> None:
+            event["seq"] = len(trace_events) + 1
+            trace_events.append(event)
+
+        for seed in trace_seed:
+            add_trace(dict(seed))
 
         def emit_chunk(chunk: str, stream_db: Session | None = None) -> str:
             nonlocal assistant_message_id
@@ -291,10 +374,22 @@ def chat(
                 tools_payload = registry.to_openai_tools()
                 messages_for_round = messages_to_model
                 tool_calls: list[dict] = []
+                raw_tool_calls: list[dict] = []
+                used_json_fallback = False
                 assistant_content = ""
 
                 if tools_payload:
-                    assistant_content, tool_calls, _, _, plan_json = plan_with_tools(
+                    add_trace(
+                        {
+                            "type": "llm_request",
+                            "stage": "planning",
+                            "source": "orchestrator",
+                            "model": model_name,
+                            "messages": messages_for_round,
+                            "tools": tools_payload,
+                        }
+                    )
+                    assistant_content, tool_calls, raw_tool_calls, used_json_fallback, plan_json = plan_with_tools(
                         messages_for_round,
                         tools_payload,
                         model_name,
@@ -304,6 +399,29 @@ def chat(
                         resolved_agent,
                         user_id,
                         convo_id,
+                    )
+                    add_trace(
+                        {
+                            "type": "llm_response",
+                            "stage": "planning",
+                            "source": "llm",
+                            "assistant_content": assistant_content,
+                            "tool_calls": tool_calls,
+                            "raw_tool_calls": raw_tool_calls,
+                            "json_fallback": used_json_fallback,
+                            "plan": plan_json,
+                        }
+                    )
+                else:
+                    add_trace(
+                        {
+                            "type": "llm_request",
+                            "stage": "direct",
+                            "source": "orchestrator",
+                            "model": model_name,
+                            "messages": messages_for_round,
+                            "tools": [],
+                        }
                     )
 
                 missing_slots = identify_missing_slots(tool_calls, registry)
@@ -318,10 +436,49 @@ def chat(
                         }
                     )
                     clarify_text = build_missing_slots_question(missing_slots)
+                    add_trace(
+                        {
+                            "type": "missing_slots",
+                            "source": "orchestrator",
+                            "missing_slots": missing_slots,
+                            "clarify_text": clarify_text,
+                        }
+                    )
+                    add_trace(
+                        {
+                            "type": "final_response",
+                            "source": "orchestrator",
+                            "content": clarify_text,
+                        }
+                    )
+                    final_text = clarify_text
                     chunk_iter = [clarify_text]
                 elif tool_calls:
                     tool_results, tool_summary = execute_plan(
                         tool_calls, registry, stream_db, resolved_agent, user_id, convo_id
+                    )
+                    add_trace(
+                        {
+                            "type": "tool_results",
+                            "source": "tool_executor",
+                            "results": tool_results,
+                            "summary": tool_summary,
+                        }
+                    )
+                    assistant_message, tool_messages = _build_tool_messages(
+                        tool_calls, tool_results, assistant_content
+                    )
+                    final_messages = messages_for_round + [assistant_message] + tool_messages
+                    final_messages.append({"role": "system", "content": FINAL_TOOL_INSTRUCTION})
+                    add_trace(
+                        {
+                            "type": "llm_request",
+                            "stage": "synthesis",
+                            "source": "orchestrator",
+                            "model": model_name,
+                            "messages": final_messages,
+                            "tools": [],
+                        }
                     )
                     final_text = synthesize_with_tools(
                         messages_for_round,
@@ -333,11 +490,32 @@ def chat(
                         base_url,
                         resolved_agent,
                     )
+                    add_trace(
+                        {
+                            "type": "llm_response",
+                            "stage": "synthesis",
+                            "source": "llm",
+                            "content": final_text,
+                        }
+                    )
                     chunk_iter = [final_text] if final_text else []
                 else:
-                    chunk_iter = [assistant_content] if assistant_content else stream_without_tools(
-                        model_name, messages_for_round, api_key=api_key, base_url=base_url
-                    )
+                    if assistant_content:
+                        final_text = assistant_content
+                        add_trace(
+                            {
+                                "type": "llm_response",
+                                "stage": "planning",
+                                "source": "llm",
+                                "assistant_content": assistant_content,
+                                "note": "no_tool_calls",
+                            }
+                        )
+                        chunk_iter = [assistant_content]
+                    else:
+                        chunk_iter = stream_without_tools(
+                            model_name, messages_for_round, api_key=api_key, base_url=base_url
+                        )
 
                 sent_any = False
                 for chunk in chunk_iter:
@@ -348,20 +526,37 @@ def chat(
                         yield f"data: {json.dumps({'content': chunk})}\n\n"
                     else:
                         yield emit_chunk(chunk, stream_db)
+                if final_text is None and assistant_chunks:
+                    final_text = "".join(assistant_chunks)
+                    add_trace(
+                        {
+                            "type": "llm_response",
+                            "stage": "direct",
+                            "source": "llm",
+                            "content": final_text,
+                        }
+                    )
                 if sent_any:
                     stream_completed = True
                 if not stream_completed:
                     yield f"data: {json.dumps({'error': 'tool_call_loop'})}\n\n"
             except Exception:
                 logger.exception("Chat stream failed")
+                add_trace(
+                    {
+                        "type": "error",
+                        "source": "orchestrator",
+                        "message": "chat_stream_failed",
+                    }
+                )
                 yield f"data: {json.dumps({'error': 'service unavailable'})}\n\n"
 
             # Trigger memory summarization after successful completion
             if stream_completed and not is_guest:
                 try:
-                    final_answer = "".join(assistant_chunks) if assistant_chunks else None
+                    final_answer = final_text or ("".join(assistant_chunks) if assistant_chunks else None)
                     latency_ms = int((time.monotonic() - start_time) * 1000)
-                    write_agent_run(
+                    agent_run_id = write_agent_run(
                         stream_db,
                         {
                             "agent": resolved_agent,
@@ -375,6 +570,18 @@ def chat(
                             "final_answer": final_answer,
                             "latency_ms": latency_ms,
                             "cost": None,
+                        },
+                    )
+                    write_agent_run_trace(
+                        stream_db,
+                        {
+                            "agent_run_id": agent_run_id,
+                            "agent": resolved_agent,
+                            "user_id": user_id,
+                            "conversation_id": convo_id,
+                            "user_message_id": user_message_id,
+                            "request_text": messages[-1]["content"] if messages else None,
+                            "trace": trace_events,
                         },
                     )
                 except Exception:

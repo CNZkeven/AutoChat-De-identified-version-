@@ -7,7 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from .config import CORS_ORIGINS
 from .db import Base, SessionLocal, engine
 from .models import User
-from .routers import auth, chat, conversations, courses, export, knowledge, memory, rag, tools
+from .routers import admin, auth, chat, conversations, courses, export, knowledge, memory, rag, tools
 from .security import hash_password
 
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +37,16 @@ def on_startup() -> None:
                 )
             )
             db.commit()
+        admin_user = db.query(User).filter(User.username == "admin").first()
+        if not admin_user:
+            db.add(
+                User(
+                    username="admin",
+                    email=None,
+                    hashed_password=hash_password("admin@Just"),
+                )
+            )
+            db.commit()
     except SQLAlchemyError:
         logging.exception("Failed to ensure demo user exists")
         db.rollback()
@@ -45,6 +55,7 @@ def on_startup() -> None:
 
 
 app.include_router(auth.router)
+app.include_router(admin.router)
 app.include_router(conversations.router)
 app.include_router(chat.router)
 app.include_router(memory.router)

@@ -29,7 +29,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             window.Auth.setToken(data.access_token);
             window.Auth.setUser(data.user);
-            window.location.href = 'index.html';
+            if (data.user && data.user.username === 'admin') {
+                window.location.href = 'admin.html';
+            } else {
+                window.location.href = 'index.html';
+            }
         } catch (error) {
             if (errorBox) errorBox.textContent = error.message;
         }

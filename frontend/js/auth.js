@@ -74,6 +74,7 @@
         const loginEl = document.getElementById('nav-login');
         const registerEl = document.getElementById('nav-register');
         const logoutEl = document.getElementById('nav-logout');
+        const adminEl = document.getElementById('nav-admin');
 
         if (userEl) {
             userEl.textContent = user ? `Hello, ${user.username}` : '';
@@ -88,6 +89,10 @@
                 clearAuth();
                 window.location.href = 'login.html';
             });
+        }
+        if (adminEl) {
+            const isAdmin = user && user.username === 'admin';
+            adminEl.style.display = isAdmin ? 'inline-flex' : 'none';
         }
     }
 
