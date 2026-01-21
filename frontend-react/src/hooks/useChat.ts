@@ -35,7 +35,7 @@ export function useChat({ agent, conversationId, isGuest = false, onMessageSent 
       console.error('Failed to load messages:', err);
       setError('加载消息失败');
     }
-  }, [conversationId, agent]);
+  }, [conversationId, agent, isGuest]);
 
   // Send a message
   const sendMessage = useCallback(

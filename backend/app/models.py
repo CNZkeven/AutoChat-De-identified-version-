@@ -237,3 +237,17 @@ class AgentRun(Base):
     latency_ms = Column(Integer, nullable=True)
     cost = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AgentRunTrace(Base):
+    __tablename__ = "agent_run_traces"
+
+    id = Column(Integer, primary_key=True)
+    agent_run_id = Column(Integer, ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    agent = Column(String(40), nullable=False, index=True)
+    user_id = Column(Integer, nullable=True, index=True)
+    conversation_id = Column(Integer, nullable=True, index=True)
+    user_message_id = Column(Integer, nullable=True, index=True)
+    request_text = Column(Text, nullable=True)
+    trace = Column(JSONB, nullable=False, default=list)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -25,8 +25,9 @@ export function LoginForm() {
     try {
       const response = await authService.login({ username, password });
       login(response.access_token, response.user);
-      navigate(from, { replace: true });
-    } catch (err) {
+      const target = response.user.username === 'admin' ? '/admin' : from;
+      navigate(target, { replace: true });
+    } catch {
       setError('用户名或密码错误');
     } finally {
       setLoading(false);

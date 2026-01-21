@@ -5,6 +5,8 @@ import { ChatPage } from './pages/ChatPage';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
+import { AdminRoute } from './components/auth/AdminRoute';
+import { AdminPage } from './pages/AdminPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -39,6 +41,14 @@ function App() {
               <ProtectedRoute>
                 <ChatPage />
               </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin"
+            element={
+              <AdminRoute>
+                <AdminPage />
+              </AdminRoute>
             }
           />
         </Routes>
