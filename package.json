@@ -9,7 +9,7 @@
     "lint": "npm run lint:frontend",
     "test": "node -e \"console.log('no tests configured')\"",
     "build": "npm run build:frontend",
-    "lint:frontend": "npm --prefix frontend-react run lint",
-    "build:frontend": "npm --prefix frontend-react run build"
+    "lint:frontend": "npm --prefix frontend-react ci && npm --prefix frontend-react run lint",
+    "build:frontend": "npm --prefix frontend-react ci && npm --prefix frontend-react run build"
   }
 }
