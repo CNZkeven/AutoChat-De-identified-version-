@@ -26,8 +26,7 @@ The evaluation agent can now pull external academic achievement data via the ext
 
 ## Database Merge (Postgres)
 - Unified schema now includes knowledge base, courses, and tools tables, plus optional sessions.
-- Migration helper: `scripts/migrate_sqlite_to_postgres.py` (reads `database/agent_db.sqlite`).
-- Default migration agent for historical chat sessions: `task`.
+- SQLite 迁移脚本已移除；数据维护脚本统一放在 `backend/app/maintenance`。
 
 ## Conversation Titles
 - Default title is “新对话”.

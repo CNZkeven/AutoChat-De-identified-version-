@@ -7,7 +7,6 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 from jose import jwt
-
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
