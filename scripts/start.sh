@@ -20,18 +20,18 @@ log_error() {
 }
 
 clean_logs() {
-    local files
-    files=$(find "$LOG_DIR" -maxdepth 1 -type f 2>/dev/null || true)
-    if [ -z "$files" ]; then
-        return 0
-    fi
-    while IFS= read -r file; do
-        case "$file" in
-            *.log|*.pid)
-                : > "$file"
-                ;;
-        esac
-    done <<< "$files"
+    log_info "清理日志文件..."
+    shopt -s nullglob
+    for file in "$LOG_DIR"/*; do
+        if [ -f "$file" ]; then
+            case "$file" in
+                *.log|*.pid)
+                    : > "$file"
+                    ;;
+            esac
+        fi
+    done
+    shopt -u nullglob
 }
 
 compose() {
@@ -128,6 +128,7 @@ if ! docker compose version >/dev/null 2>&1; then
 fi
 
 mkdir -p "$LOG_DIR"
+log_info "初始化启动脚本..."
 clean_logs
 
 if [ ! -f "$ENV_FILE" ]; then
