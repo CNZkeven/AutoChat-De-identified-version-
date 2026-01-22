@@ -19,6 +19,21 @@ log_error() {
     echo "[start][error] $*" >&2
 }
 
+clean_logs() {
+    local files
+    files=$(find "$LOG_DIR" -maxdepth 1 -type f 2>/dev/null || true)
+    if [ -z "$files" ]; then
+        return 0
+    fi
+    while IFS= read -r file; do
+        case "$file" in
+            *.log|*.pid)
+                : > "$file"
+                ;;
+        esac
+    done <<< "$files"
+}
+
 compose() {
     (cd "$ROOT_DIR" && docker compose "$@")
 }
@@ -113,6 +128,7 @@ if ! docker compose version >/dev/null 2>&1; then
 fi
 
 mkdir -p "$LOG_DIR"
+clean_logs
 
 if [ ! -f "$ENV_FILE" ]; then
     cp "$EXAMPLE_FILE" "$ENV_FILE"

@@ -1,7 +1,9 @@
 import json
 import logging
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 from jose import jwt
@@ -39,6 +41,22 @@ EXTERNAL_SCOPE_GRADES = "grades:read:own"
 EXTERNAL_SCOPE_DISTRIBUTION = "grades:distribution:read"
 
 
+def _resolve_external_base_url(base_url: str) -> str:
+    if not base_url:
+        return ""
+    parsed = urlparse(base_url)
+    host = parsed.hostname
+    if host in {"localhost", "127.0.0.1"} and Path("/.dockerenv").exists():
+        netloc = parsed.netloc.replace(host or "", "host.docker.internal")
+        return urlunparse(parsed._replace(netloc=netloc))
+    return base_url
+
+
+def _should_ignore_proxy(base_url: str) -> bool:
+    parsed = urlparse(base_url)
+    return parsed.hostname in {"localhost", "127.0.0.1", "host.docker.internal"}
+
+
 def _build_external_token(student_no: str, scopes: list[str]) -> str:
     now = datetime.utcnow()
     payload = {
@@ -64,9 +82,11 @@ def _external_get(
         token = _build_external_token(student_no, scopes)
     except Exception as exc:
         return {"status": "error", "message": "external jwt failed", "detail": str(exc)}
-    url = f"{EXTERNAL_API_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+    base_url = _resolve_external_base_url(EXTERNAL_API_BASE_URL)
+    url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+    trust_env = not _should_ignore_proxy(base_url)
     try:
-        with httpx.Client(timeout=EXTERNAL_API_TIMEOUT) as client:
+        with httpx.Client(timeout=EXTERNAL_API_TIMEOUT, trust_env=trust_env) as client:
             response = client.get(
                 url,
                 headers={"Authorization": f"Bearer {token}"},
