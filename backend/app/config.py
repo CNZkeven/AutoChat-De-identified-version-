@@ -24,6 +24,13 @@ SUMMARY_API_KEY = os.environ.get("SUMMARY_API_KEY", "")
 SUMMARY_BASE_URL = os.environ.get("SUMMARY_BASE_URL", "")
 SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "")
 
+EXTERNAL_API_BASE_URL = os.environ.get("EXTERNAL_API_BASE_URL", "http://localhost:3000")
+EXTERNAL_JWT_SECRET = os.environ.get("EXTERNAL_JWT_SECRET", "external-jwt-dev-secret")
+EXTERNAL_JWT_ISSUER = os.environ.get("EXTERNAL_JWT_ISSUER", "external-system")
+EXTERNAL_JWT_AUDIENCE = os.environ.get("EXTERNAL_JWT_AUDIENCE", "course-analysis-external")
+EXTERNAL_JWT_EXPIRE_MINUTES = int(os.environ.get("EXTERNAL_JWT_EXPIRE_MINUTES", "60"))
+EXTERNAL_API_TIMEOUT = float(os.environ.get("EXTERNAL_API_TIMEOUT", "6"))
+
 
 def get_agent_credentials(agent: str) -> tuple[str, str]:
     prefix = AGENT_ENV_PREFIXES.get(agent)
@@ -44,7 +51,7 @@ def get_agent_model(agent: str) -> str:
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.environ.get(
-        "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+        "CORS_ORIGINS", "http://localhost:5174,http://127.0.0.1:5174"
     ).split(",")
     if origin.strip()
 ]

@@ -1,11 +1,23 @@
 import json
 import logging
+from datetime import datetime, timedelta
 from typing import Any
+
+import httpx
+from jose import jwt
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..models import Course, Knowledge, UserProfile
+from ..config import (
+    EXTERNAL_API_BASE_URL,
+    EXTERNAL_API_TIMEOUT,
+    EXTERNAL_JWT_AUDIENCE,
+    EXTERNAL_JWT_EXPIRE_MINUTES,
+    EXTERNAL_JWT_ISSUER,
+    EXTERNAL_JWT_SECRET,
+)
+from ..models import Course, Knowledge, User, UserProfile
 from .cache import (
     INSTITUTION_CACHE_TTL,
     KNOWLEDGE_CACHE_TTL,
@@ -21,6 +33,58 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SAMPLE_SIZE = 20
 DEFAULT_MAX_TEXT = 800
+
+EXTERNAL_SCOPE_SYLLABUS = "syllabus:read"
+EXTERNAL_SCOPE_GRADES = "grades:read:own"
+EXTERNAL_SCOPE_DISTRIBUTION = "grades:distribution:read"
+
+
+def _build_external_token(student_no: str, scopes: list[str]) -> str:
+    now = datetime.utcnow()
+    payload = {
+        "student_no": student_no,
+        "scopes": scopes,
+        "iss": EXTERNAL_JWT_ISSUER,
+        "aud": EXTERNAL_JWT_AUDIENCE,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=EXTERNAL_JWT_EXPIRE_MINUTES)).timestamp()),
+    }
+    return jwt.encode(payload, EXTERNAL_JWT_SECRET, algorithm="HS256")
+
+
+def _external_get(
+    path: str,
+    student_no: str,
+    scopes: list[str],
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not EXTERNAL_API_BASE_URL:
+        return {"status": "not_configured", "message": "external api base url missing"}
+    try:
+        token = _build_external_token(student_no, scopes)
+    except Exception as exc:
+        return {"status": "error", "message": "external jwt failed", "detail": str(exc)}
+    url = f"{EXTERNAL_API_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+    try:
+        with httpx.Client(timeout=EXTERNAL_API_TIMEOUT) as client:
+            response = client.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                params=params,
+            )
+    except httpx.RequestError as exc:
+        return {"status": "error", "message": "external request failed", "detail": str(exc)}
+    try:
+        payload = response.json()
+    except Exception:
+        payload = response.text
+    if response.status_code >= 400:
+        return {
+            "status": "error",
+            "http_status": response.status_code,
+            "detail": payload,
+        }
+    return {"status": "ok", "data": payload}
 
 
 def _validate_args(schema: dict[str, Any] | None, args: dict[str, Any]) -> list[str]:
@@ -281,6 +345,181 @@ def execute_tool_call(
             "message": "external repository not configured",
         }
 
+    if tool_name == "fetch_external_student_academic_data":
+        action = args.get("action")
+        user_id = args.get("user_id")
+        if not user_id:
+            return {"status": "error", "message": "login_required"}
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return {"status": "error", "message": "user_not_found"}
+        student_no = user.username
+        if not student_no:
+            return {"status": "error", "message": "student_no_missing"}
+
+        def _coerce_int(value: Any) -> int | None:
+            if value is None:
+                return None
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str) and value.isdigit():
+                return int(value)
+            return None
+
+        def _to_bool(value: Any) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "y"}
+            return False
+
+        actions = {
+            "list_course_offerings",
+            "course_offering",
+            "course_objectives",
+            "course_grades",
+            "course_achievements",
+            "grade_distribution",
+            "summary",
+        }
+        if action not in actions:
+            return {"status": "error", "message": "unsupported action", "action": action}
+
+        offering_id = _coerce_int(args.get("offering_id"))
+        min_sample = _coerce_int(args.get("min_sample")) or 10
+        include_grades = _to_bool(args.get("include_grades"))
+        include_distribution = _to_bool(args.get("include_distribution"))
+        max_offerings = _coerce_int(args.get("max_offerings")) or 8
+        max_offerings = max(1, min(max_offerings, 20))
+
+        if action == "list_course_offerings":
+            result = _external_get(
+                "/external/v1/students/me/course-offerings",
+                student_no,
+                [EXTERNAL_SCOPE_SYLLABUS],
+            )
+            result["action"] = action
+            return result
+
+        if action == "course_offering":
+            if offering_id is None:
+                return {"status": "error", "message": "missing offering_id"}
+            result = _external_get(
+                f"/external/v1/course-offerings/{offering_id}",
+                student_no,
+                [EXTERNAL_SCOPE_SYLLABUS],
+            )
+            result["action"] = action
+            result["offering_id"] = offering_id
+            return result
+
+        if action == "course_objectives":
+            if offering_id is None:
+                return {"status": "error", "message": "missing offering_id"}
+            result = _external_get(
+                f"/external/v1/course-offerings/{offering_id}/objectives",
+                student_no,
+                [EXTERNAL_SCOPE_SYLLABUS],
+            )
+            result["action"] = action
+            result["offering_id"] = offering_id
+            return result
+
+        if action == "course_grades":
+            if offering_id is None:
+                return {"status": "error", "message": "missing offering_id"}
+            result = _external_get(
+                f"/external/v1/students/me/course-offerings/{offering_id}/grades",
+                student_no,
+                [EXTERNAL_SCOPE_GRADES],
+            )
+            result["action"] = action
+            result["offering_id"] = offering_id
+            return result
+
+        if action == "course_achievements":
+            if offering_id is None:
+                return {"status": "error", "message": "missing offering_id"}
+            result = _external_get(
+                f"/external/v1/students/me/course-offerings/{offering_id}/achievements",
+                student_no,
+                [EXTERNAL_SCOPE_GRADES],
+            )
+            result["action"] = action
+            result["offering_id"] = offering_id
+            return result
+
+        if action == "grade_distribution":
+            if offering_id is None:
+                return {"status": "error", "message": "missing offering_id"}
+            result = _external_get(
+                f"/external/v1/course-offerings/{offering_id}/grades/distribution",
+                student_no,
+                [EXTERNAL_SCOPE_DISTRIBUTION],
+                params={"minSample": min_sample},
+            )
+            result["action"] = action
+            result["offering_id"] = offering_id
+            result["min_sample"] = min_sample
+            return result
+
+        if action == "summary":
+            list_result = _external_get(
+                "/external/v1/students/me/course-offerings",
+                student_no,
+                [EXTERNAL_SCOPE_SYLLABUS],
+            )
+            if list_result.get("status") != "ok":
+                list_result["action"] = action
+                return list_result
+            offerings = list_result.get("data")
+            if not isinstance(offerings, list):
+                return {
+                    "status": "error",
+                    "message": "unexpected offerings payload",
+                    "action": action,
+                }
+            items = []
+            for offering in offerings[:max_offerings]:
+                current_id = offering.get("offeringId") if isinstance(offering, dict) else None
+                entry = {"offering": offering}
+                if current_id is None:
+                    entry["error"] = "missing offeringId"
+                    items.append(entry)
+                    continue
+                entry["objectives"] = _external_get(
+                    f"/external/v1/course-offerings/{current_id}/objectives",
+                    student_no,
+                    [EXTERNAL_SCOPE_SYLLABUS],
+                )
+                entry["achievements"] = _external_get(
+                    f"/external/v1/students/me/course-offerings/{current_id}/achievements",
+                    student_no,
+                    [EXTERNAL_SCOPE_GRADES],
+                )
+                if include_grades:
+                    entry["grades"] = _external_get(
+                        f"/external/v1/students/me/course-offerings/{current_id}/grades",
+                        student_no,
+                        [EXTERNAL_SCOPE_GRADES],
+                    )
+                if include_distribution:
+                    entry["distribution"] = _external_get(
+                        f"/external/v1/course-offerings/{current_id}/grades/distribution",
+                        student_no,
+                        [EXTERNAL_SCOPE_DISTRIBUTION],
+                        params={"minSample": min_sample},
+                    )
+                items.append(entry)
+            return {
+                "status": "ok",
+                "action": action,
+                "student_no": student_no,
+                "offerings_count": len(offerings),
+                "returned": len(items),
+                "items": items,
+            }
+
     if tool_name == "execute_strategy_engine":
         action = args.get("action")
         context_data = args.get("context_data", {})
@@ -339,6 +578,9 @@ def execute_tool_calls(
                     args["user_id"] = user_id
             if not args.get("scope"):
                 args["scope"] = "basic"
+        if name == "fetch_external_student_academic_data":
+            if user_id is not None:
+                args["user_id"] = user_id
         if contract and contract.get("auth_scope") == "write" and not allow_write:
             result = {"status": "error", "message": "write_scope_blocked"}
             results.append({"id": call.get("id"), "name": name, "args": args, "result": result})

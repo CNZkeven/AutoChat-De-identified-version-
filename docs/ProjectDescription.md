@@ -6,6 +6,7 @@ Docker Compose is the default dev entrypoint; `scripts/start.sh` wraps `docker c
 
 Recent upgrades added a unified orchestrator pipeline (plan → tool execution → synthesis), agent profiles with routing hints,
 tool contracts and sanitization, Redis-backed caching for tool reads, and agent run replay logs for audit and evaluation.
+The evaluation agent can now pull external academic achievement data via the external system API (JWT-based).
 
 ## Docker Compose
 - Recommended cross-platform dev entrypoint: `cp .env.example .env` then `./scripts/start.sh` (or `docker compose up --build`).
@@ -16,6 +17,7 @@ tool contracts and sanitization, Redis-backed caching for tool reads, and agent 
 ## React Frontend Notes
 - Frontend is implemented only in `frontend-react` (legacy `frontend` directory removed).
 - Uses Vite dev server. `VITE_API_URL` points to backend.
+- Dev frontend port defaults to 5174 to avoid conflicts with other local services.
 - `VITE_ALLOW_GUEST=false` disables guest access.
 
 ## Authentication
@@ -54,6 +56,7 @@ tool contracts and sanitization, Redis-backed caching for tool reads, and agent 
 
 ## Environment Variables
 - `DATABASE_URL`, `JWT_SECRET_KEY`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `CORS_ORIGINS`
+- External data access: `EXTERNAL_API_BASE_URL`, `EXTERNAL_JWT_SECRET`, `EXTERNAL_JWT_ISSUER`, `EXTERNAL_JWT_AUDIENCE`, `EXTERNAL_JWT_EXPIRE_MINUTES`, `EXTERNAL_API_TIMEOUT`
 - Per-agent model credentials: `IDEOLOGICAL_*`, `EVALUATION_*`, `TASK_*`, `EXPLORATION_*`, `COMPETITION_*`, `COURSE_*` (include `*_API_KEY`, `*_BASE_URL`, `*_MODEL`)
 - Memory summary credentials: `SUMMARY_API_KEY`, `SUMMARY_BASE_URL`, `SUMMARY_MODEL`
 - Optional cache: `REDIS_URL` (tool reads with TTL; falls back gracefully when unavailable)
