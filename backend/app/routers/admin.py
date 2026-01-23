@@ -18,6 +18,8 @@ from ..schemas import (
     AdminRunSummaryOut,
     AdminUserOut,
     AdminUserProfileOut,
+    DMSyncRequest,
+    DMSyncResponse,
 )
 from ..services.agent_profiles import get_agent_allowed_tools_from_profile, get_agent_profile
 from ..services.agent_prompts import get_agent_allowed_tools, get_agent_system_prompt
@@ -36,6 +38,7 @@ from ..services.orchestrator import (
 )
 from ..services.title import generate_conversation_title
 from ..services.tool_registry import load_tool_registry
+from ..sync import run_dm_sync
 from .chat import (
     AGENT_CONFIG,
     PROMPT_TEMPLATE_PATH,
@@ -519,4 +522,24 @@ def debug_run(
         conversation_id=convo.id,
         trace_id=trace_id,
         final_text=final_text,
+    )
+
+
+@router.post("/dm-sync", response_model=DMSyncResponse)
+def trigger_dm_sync(
+    payload: DMSyncRequest,
+    admin_user: User = Depends(get_admin_user),
+) -> DMSyncResponse:
+    _ = admin_user
+    result = run_dm_sync(
+        job_name=payload.job_name,
+        entities=payload.entities,
+        term_window=payload.term_window,
+        batch_size=payload.batch_size,
+    )
+    return DMSyncResponse(
+        job_id=result["job_id"],
+        job_name=result["job_name"],
+        status=result["status"],
+        detail=result["detail"],
     )

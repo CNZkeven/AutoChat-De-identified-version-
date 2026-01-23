@@ -1,23 +1,10 @@
 import json
 import logging
-from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse, urlunparse
 
-import httpx
-from jose import jwt
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
-from ..config import (
-    EXTERNAL_API_BASE_URL,
-    EXTERNAL_API_TIMEOUT,
-    EXTERNAL_JWT_AUDIENCE,
-    EXTERNAL_JWT_EXPIRE_MINUTES,
-    EXTERNAL_JWT_ISSUER,
-    EXTERNAL_JWT_SECRET,
-)
 from ..models import Course, Knowledge, User, UserProfile
 from .cache import (
     INSTITUTION_CACHE_TTL,
@@ -35,75 +22,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_SAMPLE_SIZE = 20
 DEFAULT_MAX_TEXT = 800
 
-EXTERNAL_SCOPE_SYLLABUS = "syllabus:read"
-EXTERNAL_SCOPE_GRADES = "grades:read:own"
-EXTERNAL_SCOPE_DISTRIBUTION = "grades:distribution:read"
-
-
-def _resolve_external_base_url(base_url: str) -> str:
-    if not base_url:
-        return ""
-    parsed = urlparse(base_url)
-    host = parsed.hostname
-    if host in {"localhost", "127.0.0.1"} and Path("/.dockerenv").exists():
-        netloc = parsed.netloc.replace(host or "", "host.docker.internal")
-        return urlunparse(parsed._replace(netloc=netloc))
-    return base_url
-
-
-def _should_ignore_proxy(base_url: str) -> bool:
-    parsed = urlparse(base_url)
-    return parsed.hostname in {"localhost", "127.0.0.1", "host.docker.internal"}
-
-
-def _build_external_token(student_no: str, scopes: list[str]) -> str:
-    now = datetime.utcnow()
-    payload = {
-        "student_no": student_no,
-        "scopes": scopes,
-        "iss": EXTERNAL_JWT_ISSUER,
-        "aud": EXTERNAL_JWT_AUDIENCE,
-        "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(minutes=EXTERNAL_JWT_EXPIRE_MINUTES)).timestamp()),
-    }
-    return jwt.encode(payload, EXTERNAL_JWT_SECRET, algorithm="HS256")
-
-
-def _external_get(
-    path: str,
-    student_no: str,
-    scopes: list[str],
-    params: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    if not EXTERNAL_API_BASE_URL:
-        return {"status": "not_configured", "message": "external api base url missing"}
-    try:
-        token = _build_external_token(student_no, scopes)
-    except Exception as exc:
-        return {"status": "error", "message": "external jwt failed", "detail": str(exc)}
-    base_url = _resolve_external_base_url(EXTERNAL_API_BASE_URL)
-    url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
-    trust_env = not _should_ignore_proxy(base_url)
-    try:
-        with httpx.Client(timeout=EXTERNAL_API_TIMEOUT, trust_env=trust_env) as client:
-            response = client.get(
-                url,
-                headers={"Authorization": f"Bearer {token}"},
-                params=params,
-            )
-    except httpx.RequestError as exc:
-        return {"status": "error", "message": "external request failed", "detail": str(exc)}
-    try:
-        payload = response.json()
-    except Exception:
-        payload = response.text
-    if response.status_code >= 400:
-        return {
-            "status": "error",
-            "http_status": response.status_code,
-            "detail": payload,
-        }
-    return {"status": "ok", "data": payload}
+def _set_dm_session_context(db: Session, student_no: str | None, role: str | None) -> None:
+    if student_no:
+        db.execute(text("SET LOCAL app.student_no = :student_no"), {"student_no": student_no})
+    if role:
+        db.execute(text("SET LOCAL app.role = :role"), {"role": role})
 
 
 def _validate_args(schema: dict[str, Any] | None, args: dict[str, Any]) -> list[str]:
@@ -240,15 +163,104 @@ def execute_tool_call(
     if tool_name == "query_institutional_database":
         category = args.get("category")
         keywords = args.get("keywords", "")
-        cache_key = make_cache_key(
-            "tool:query_institutional_database",
-            {"category": category, "keywords": keywords},
-        )
+        cache_payload = {"category": category, "keywords": keywords}
+        if category == "curriculum" and args.get("user_id") is not None:
+            cache_payload["user_id"] = args.get("user_id")
+        cache_key = make_cache_key("tool:query_institutional_database", cache_payload)
         cached = cache_get(cache_key)
         if cached is not None:
             cached["_cache"] = "hit"
             return cached
         if category == "curriculum":
+            user_id = args.get("user_id")
+            student_no = None
+            if user_id:
+                user = db.query(User).filter(User.id == user_id).first()
+                if user and user.username:
+                    student_no = user.username
+            if student_no:
+                _set_dm_session_context(db, student_no, "student")
+                program_row = db.execute(
+                    text("SELECT program_id FROM dm.students WHERE student_no = :student_no LIMIT 1"),
+                    {"student_no": student_no},
+                ).first()
+                program_id = program_row[0] if program_row else None
+                program_version_id = None
+                if program_id:
+                    version_row = db.execute(
+                        text(
+                            """
+SELECT program_version_id
+  FROM dm.program_versions
+ WHERE program_id = :program_id
+ ORDER BY is_active DESC, updated_at DESC NULLS LAST
+ LIMIT 1
+"""
+                        ),
+                        {"program_id": program_id},
+                    ).first()
+                    program_version_id = version_row[0] if version_row else None
+
+                if program_version_id:
+                    like = f"%{keywords}%" if keywords else None
+                    sql = """
+SELECT pvc.course_id,
+       c.course_code,
+       c.course_name,
+       c.credits,
+       pvc.course_category,
+       pvc.course_nature,
+       pvc.planned_semester,
+       pvc.plan_remarks,
+       pvc.display_order_label
+  FROM dm.program_version_courses pvc
+  JOIN dm.courses c ON c.course_id = pvc.course_id
+ WHERE pvc.program_version_id = :program_version_id
+   AND (:kw IS NULL OR c.course_name ILIKE :kw OR c.course_code ILIKE :kw)
+ ORDER BY pvc.display_order_primary NULLS LAST,
+          pvc.display_order_secondary NULLS LAST,
+          c.course_code ASC
+ LIMIT 20
+"""
+                    rows = db.execute(
+                        text(sql),
+                        {"program_version_id": program_version_id, "kw": like},
+                    ).mappings()
+                    results = []
+                    for row in rows:
+                        item = dict(row)
+                        syllabus_row = db.execute(
+                            text(
+                                """
+SELECT syllabus_version_id,
+       version_name,
+       basic_info,
+       process_requirements
+  FROM dm.syllabus_versions
+ WHERE course_id = :course_id
+ ORDER BY is_default DESC, updated_at DESC NULLS LAST
+ LIMIT 1
+"""
+                            ),
+                            {"course_id": row["course_id"]},
+                        ).mappings().first()
+                        if syllabus_row:
+                            item["syllabus"] = dict(syllabus_row)
+                        results.append(item)
+                    result = {
+                        "status": "ok",
+                        "category": category,
+                        "keywords": keywords,
+                        "student_no": student_no,
+                        "program_id": program_id,
+                        "program_version_id": program_version_id,
+                        "results": results,
+                        "source": "dm",
+                    }
+                    cache_set(cache_key, result, INSTITUTION_CACHE_TTL)
+                    result["_cache"] = "miss"
+                    return result
+
             query = db.query(Course)
             if keywords:
                 like = f"%{keywords}%"
@@ -277,10 +289,12 @@ def execute_tool_call(
                     }
                     for c in courses
                 ],
+                "source": "local",
             }
             cache_set(cache_key, result, INSTITUTION_CACHE_TTL)
             result["_cache"] = "miss"
             return result
+
         if category in {"competition_history", "research_strength"}:
             query = db.query(Knowledge)
             if keywords:
@@ -364,7 +378,7 @@ def execute_tool_call(
             "message": "external repository not configured",
         }
 
-    if tool_name == "fetch_external_student_academic_data":
+    if tool_name == "fetch_dm_student_academic_data":
         action = args.get("action")
         user_id = args.get("user_id")
         if not user_id:
@@ -410,131 +424,195 @@ def execute_tool_call(
         include_distribution = _to_bool(args.get("include_distribution"))
         max_offerings = _coerce_int(args.get("max_offerings")) or 8
         max_offerings = max(1, min(max_offerings, 20))
+        term = args.get("term")
+
+        _set_dm_session_context(db, student_no, "student")
+
+        def _fetch_offering_list(limit: int | None = None) -> list[dict[str, Any]]:
+            sql = """
+SELECT e.offering_id,
+       o.section_name,
+       o.class_number,
+       o.teacher_name,
+       t.term_name,
+       c.course_code,
+       c.course_name
+  FROM dm.enrollments e
+  JOIN dm.course_offerings o ON o.offering_id = e.offering_id
+  JOIN dm.courses c ON c.course_id = o.course_id
+  LEFT JOIN dm.academic_terms t ON t.term_id = o.term_id
+ WHERE e.student_no = :student_no
+   AND (:term IS NULL OR t.term_name = :term)
+ ORDER BY t.term_name DESC NULLS LAST, c.course_code ASC
+"""
+            params = {"student_no": student_no, "term": term}
+            if limit:
+                sql += " LIMIT :limit"
+                params["limit"] = limit
+            rows = db.execute(text(sql), params).mappings()
+            return [dict(row) for row in rows]
+
+        def _fetch_offering(offering: int) -> dict[str, Any] | None:
+            sql = """
+SELECT o.offering_id,
+       o.section_name,
+       o.class_number,
+       o.teacher_name,
+       t.term_name,
+       c.course_code,
+       c.course_name,
+       c.credits
+  FROM dm.course_offerings o
+  JOIN dm.courses c ON c.course_id = o.course_id
+  LEFT JOIN dm.academic_terms t ON t.term_id = o.term_id
+ WHERE o.offering_id = :offering_id
+"""
+            row = db.execute(text(sql), {"offering_id": offering}).mappings().first()
+            return dict(row) if row else None
+
+        def _fetch_objectives(offering: int) -> list[dict[str, Any]]:
+            sql = """
+SELECT objective_id,
+       objective_index,
+       description,
+       objective_type
+  FROM dm.course_objectives
+ WHERE offering_id = :offering_id
+ ORDER BY objective_id ASC
+"""
+            rows = db.execute(text(sql), {"offering_id": offering}).mappings()
+            return [dict(row) for row in rows]
+
+        def _fetch_grade(offering: int) -> dict[str, Any] | None:
+            sql = """
+SELECT offering_id,
+       total_score,
+       grade_text,
+       score_source
+  FROM dm.student_scores
+ WHERE offering_id = :offering_id
+   AND student_no = :student_no
+"""
+            row = db.execute(
+                text(sql), {"offering_id": offering, "student_no": student_no}
+            ).mappings().first()
+            return dict(row) if row else None
+
+        def _fetch_achievements(offering: int) -> list[dict[str, Any]]:
+            sql = """
+SELECT objective_id,
+       achievement_score,
+       total_score,
+       max_score
+  FROM dm.student_objective_achievements
+ WHERE offering_id = :offering_id
+   AND student_no = :student_no
+ ORDER BY objective_id ASC
+"""
+            rows = db.execute(
+                text(sql), {"offering_id": offering, "student_no": student_no}
+            ).mappings()
+            return [dict(row) for row in rows]
+
+        def _fetch_distribution(offering: int) -> dict[str, Any] | None:
+            sql = """
+SELECT offering_id,
+       n_students,
+       avg_score,
+       min_score,
+       max_score,
+       dist_json
+  FROM dm.section_grade_summary
+ WHERE offering_id = :offering_id
+"""
+            row = db.execute(text(sql), {"offering_id": offering}).mappings().first()
+            if not row:
+                return None
+            payload = dict(row)
+            if payload.get("n_students") is not None and payload["n_students"] < min_sample:
+                payload["note"] = "insufficient_sample"
+            return payload
 
         if action == "list_course_offerings":
-            result = _external_get(
-                "/external/v1/students/me/course-offerings",
-                student_no,
-                [EXTERNAL_SCOPE_SYLLABUS],
-            )
-            result["action"] = action
-            return result
+            return {
+                "status": "ok",
+                "action": action,
+                "student_no": student_no,
+                "items": _fetch_offering_list(None),
+            }
 
         if action == "course_offering":
             if offering_id is None:
                 return {"status": "error", "message": "missing offering_id"}
-            result = _external_get(
-                f"/external/v1/course-offerings/{offering_id}",
-                student_no,
-                [EXTERNAL_SCOPE_SYLLABUS],
-            )
-            result["action"] = action
-            result["offering_id"] = offering_id
-            return result
+            return {
+                "status": "ok",
+                "action": action,
+                "offering_id": offering_id,
+                "data": _fetch_offering(offering_id),
+            }
 
         if action == "course_objectives":
             if offering_id is None:
                 return {"status": "error", "message": "missing offering_id"}
-            result = _external_get(
-                f"/external/v1/course-offerings/{offering_id}/objectives",
-                student_no,
-                [EXTERNAL_SCOPE_SYLLABUS],
-            )
-            result["action"] = action
-            result["offering_id"] = offering_id
-            return result
+            return {
+                "status": "ok",
+                "action": action,
+                "offering_id": offering_id,
+                "data": _fetch_objectives(offering_id),
+            }
 
         if action == "course_grades":
             if offering_id is None:
                 return {"status": "error", "message": "missing offering_id"}
-            result = _external_get(
-                f"/external/v1/students/me/course-offerings/{offering_id}/grades",
-                student_no,
-                [EXTERNAL_SCOPE_GRADES],
-            )
-            result["action"] = action
-            result["offering_id"] = offering_id
-            return result
+            return {
+                "status": "ok",
+                "action": action,
+                "offering_id": offering_id,
+                "data": _fetch_grade(offering_id),
+            }
 
         if action == "course_achievements":
             if offering_id is None:
                 return {"status": "error", "message": "missing offering_id"}
-            result = _external_get(
-                f"/external/v1/students/me/course-offerings/{offering_id}/achievements",
-                student_no,
-                [EXTERNAL_SCOPE_GRADES],
-            )
-            result["action"] = action
-            result["offering_id"] = offering_id
-            return result
+            return {
+                "status": "ok",
+                "action": action,
+                "offering_id": offering_id,
+                "data": _fetch_achievements(offering_id),
+            }
 
         if action == "grade_distribution":
             if offering_id is None:
                 return {"status": "error", "message": "missing offering_id"}
-            result = _external_get(
-                f"/external/v1/course-offerings/{offering_id}/grades/distribution",
-                student_no,
-                [EXTERNAL_SCOPE_DISTRIBUTION],
-                params={"minSample": min_sample},
-            )
-            result["action"] = action
-            result["offering_id"] = offering_id
-            result["min_sample"] = min_sample
-            return result
+            return {
+                "status": "ok",
+                "action": action,
+                "offering_id": offering_id,
+                "min_sample": min_sample,
+                "data": _fetch_distribution(offering_id),
+            }
 
         if action == "summary":
-            list_result = _external_get(
-                "/external/v1/students/me/course-offerings",
-                student_no,
-                [EXTERNAL_SCOPE_SYLLABUS],
-            )
-            if list_result.get("status") != "ok":
-                list_result["action"] = action
-                return list_result
-            offerings = list_result.get("data")
-            if not isinstance(offerings, list):
-                return {
-                    "status": "error",
-                    "message": "unexpected offerings payload",
-                    "action": action,
-                }
-            items = []
-            for offering in offerings[:max_offerings]:
-                current_id = offering.get("offeringId") if isinstance(offering, dict) else None
+            offerings = _fetch_offering_list(max_offerings)
+            items: list[dict[str, Any]] = []
+            for offering in offerings:
+                current_id = offering.get("offering_id")
                 entry = {"offering": offering}
-                if current_id is None:
-                    entry["error"] = "missing offeringId"
+                if not current_id:
+                    entry["error"] = "missing offering_id"
                     items.append(entry)
                     continue
-                entry["objectives"] = _external_get(
-                    f"/external/v1/course-offerings/{current_id}/objectives",
-                    student_no,
-                    [EXTERNAL_SCOPE_SYLLABUS],
-                )
-                entry["achievements"] = _external_get(
-                    f"/external/v1/students/me/course-offerings/{current_id}/achievements",
-                    student_no,
-                    [EXTERNAL_SCOPE_GRADES],
-                )
+                entry["objectives"] = _fetch_objectives(current_id)
+                entry["achievements"] = _fetch_achievements(current_id)
                 if include_grades:
-                    entry["grades"] = _external_get(
-                        f"/external/v1/students/me/course-offerings/{current_id}/grades",
-                        student_no,
-                        [EXTERNAL_SCOPE_GRADES],
-                    )
+                    entry["grades"] = _fetch_grade(current_id)
                 if include_distribution:
-                    entry["distribution"] = _external_get(
-                        f"/external/v1/course-offerings/{current_id}/grades/distribution",
-                        student_no,
-                        [EXTERNAL_SCOPE_DISTRIBUTION],
-                        params={"minSample": min_sample},
-                    )
+                    entry["distribution"] = _fetch_distribution(current_id)
                 items.append(entry)
             return {
                 "status": "ok",
                 "action": action,
                 "student_no": student_no,
-                "offerings_count": len(offerings),
                 "returned": len(items),
                 "items": items,
             }
@@ -597,9 +675,9 @@ def execute_tool_calls(
                     args["user_id"] = user_id
             if not args.get("scope"):
                 args["scope"] = "basic"
-        if name == "fetch_external_student_academic_data":
+        if name in {"fetch_dm_student_academic_data", "query_institutional_database"}:
             if user_id is not None:
-                args["user_id"] = user_id
+                args.setdefault("user_id", user_id)
         if contract and contract.get("auth_scope") == "write" and not allow_write:
             result = {"status": "error", "message": "write_scope_blocked"}
             results.append({"id": call.get("id"), "name": name, "args": args, "result": result})

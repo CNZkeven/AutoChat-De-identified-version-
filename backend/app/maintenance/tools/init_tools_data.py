@@ -127,6 +127,11 @@ def init_tools_data():
 
         # 工具 2: query_institutional_database
         tool2_params = {
+            'user_id': {
+                'type': 'string',
+                'description': '用户唯一标识（可选，用于按专业过滤培养方案）',
+                'required': False
+            },
             'category': {
                 'type': 'string',
                 'description': '数据类别',
@@ -205,11 +210,11 @@ def init_tools_data():
             tool4_schema
         )
 
-        # 工具 5: fetch_external_student_academic_data
+        # 工具 5: fetch_dm_student_academic_data
         tool5_params = {
             'action': {
                 'type': 'string',
-                'description': '外部学业数据操作类型',
+                'description': '本地读库学业数据操作类型',
                 'enum': [
                     'list_course_offerings',
                     'course_offering',
@@ -224,6 +229,11 @@ def init_tools_data():
             'offering_id': {
                 'type': 'integer',
                 'description': '课程开设ID（除list/summary外必填）',
+                'required': False
+            },
+            'term': {
+                'type': 'string',
+                'description': '学期名称（可选，过滤课程清单）',
                 'required': False
             },
             'min_sample': {
@@ -248,17 +258,18 @@ def init_tools_data():
             }
         }
         tool5_schema = build_json_schema(
-            '访问外部系统的课程目标/成绩/达成度数据（仅限本人）。',
+            '访问本地读库的课程目标/成绩/达成度数据（仅限本人）。',
             tool5_params
         )
         upsert_tool(
             session,
-            'fetch_external_student_academic_data',
-            '访问外部系统的课程目标/成绩/达成度数据（仅限本人）。',
+            'fetch_dm_student_academic_data',
+            '访问本地读库的课程目标/成绩/达成度数据（仅限本人）。',
             tool5_schema
         )
 
         # 提交事务
+        session.query(Tool).filter(Tool.name == "fetch_external_student_academic_data").delete()
         session.commit()
         print("✓ 工具数据初始化成功！已插入/更新 5 个工具定义。")
 

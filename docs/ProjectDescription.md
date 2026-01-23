@@ -6,7 +6,7 @@ Docker Compose is the default dev entrypoint; `scripts/start.sh` wraps `docker c
 
 Recent upgrades added a unified orchestrator pipeline (plan → tool execution → synthesis), agent profiles with routing hints,
 tool contracts and sanitization, Redis-backed caching for tool reads, and agent run replay logs for audit and evaluation.
-The evaluation agent can now pull external academic achievement data via the external system API (JWT-based).
+Academic data now syncs from Achieve into the local dm schema, and agents read via internal dm tools (no external API calls).
 
 ## Docker Compose
 - Recommended cross-platform dev entrypoint: `cp .env.example .env` then `./scripts/start.sh` (or `docker compose up --build`).
@@ -46,7 +46,13 @@ The evaluation agent can now pull external academic achievement data via the ext
 - Admin UI: React route `/admin` (tabbed user management placeholder + agent debug console).
 - Admin APIs: `/api/admin/*` provide user/agent listings, conversation runs, and trace details.
 - Debug run endpoint: `POST /api/admin/debug/run` executes a test command as the selected user and stores a full trace.
+- DM 同步触发：`POST /api/admin/dm-sync` 由管理员手动触发 Achieve 同步任务。
 - Prompt template location is exposed via admin agent metadata; system prompts live in `backend/app/services/agent_prompts.py`.
+
+## Data Mart (dm) APIs
+- `GET /api/dm/me/sections` for the current student's enrolled offerings.
+- `GET /api/dm/me/scores` for the current student's scores.
+- `GET /api/dm/me/sections/{offering_id}/summary` for enrolled section summaries.
 
 ## Demo Account
 - Username: demo
@@ -55,7 +61,7 @@ The evaluation agent can now pull external academic achievement data via the ext
 
 ## Environment Variables
 - `DATABASE_URL`, `JWT_SECRET_KEY`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `CORS_ORIGINS`
-- External data access: `EXTERNAL_API_BASE_URL`, `EXTERNAL_JWT_SECRET`, `EXTERNAL_JWT_ISSUER`, `EXTERNAL_JWT_AUDIENCE`, `EXTERNAL_JWT_EXPIRE_MINUTES`, `EXTERNAL_API_TIMEOUT`
+- Achieve sync: `ACHIEVE_DB_DSN`, `SYNC_TERM_WINDOW`, `SYNC_BATCH_SIZE`, `SYNC_SCHEDULE_CRON`
 - Per-agent model credentials: `IDEOLOGICAL_*`, `EVALUATION_*`, `TASK_*`, `EXPLORATION_*`, `COMPETITION_*`, `COURSE_*` (include `*_API_KEY`, `*_BASE_URL`, `*_MODEL`)
 - Memory summary credentials: `SUMMARY_API_KEY`, `SUMMARY_BASE_URL`, `SUMMARY_MODEL`
 - Optional cache: `REDIS_URL` (tool reads with TTL; falls back gracefully when unavailable)

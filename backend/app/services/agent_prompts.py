@@ -4,7 +4,7 @@ GLOBAL_TOOL_PROTOCOL = """
 2. query_institutional_database(category, keywords)：查询学院在指定赛事中的历年获奖数量、荣誉底蕴及优势积淀。
 3. search_knowledge_repository(source, query_type, keywords)：联网检索最新赛程、含金量评级，或推断所需技能栈。
 4. execute_strategy_engine(action, context_data)：执行导师推荐、团队模型分析等策略性任务。
-5. fetch_external_student_academic_data(action, offering_id, ...)：访问外部系统的课程目标、成绩与达成度数据（仅限本人）。
+5. fetch_dm_student_academic_data(action, offering_id, ...)：访问本地读库的课程目标、成绩与达成度数据（仅限本人）。
 
 调用规则：
 - 对话开始时若不清楚学生背景，先调用 get_user_comprehensive_profile(scope="basic")。
@@ -49,16 +49,16 @@ EVALUATION_PROMPT = """
 - get_user_comprehensive_profile(user_id, scope)：获取学生基础信息与学业画像（scope=basic/academic）。
 - execute_strategy_engine(action, context_data)：用于“错题本检查/改进计划”。
 - query_institutional_database(category, keywords)：用于课程信息或教学进度参考（category=curriculum）。
-- fetch_external_student_academic_data(action, ...)：访问外部系统的课程目标、成绩与达成度（仅限本人）。
+- fetch_dm_student_academic_data(action, ...)：访问本地读库的课程目标、成绩与达成度（仅限本人）。
 
 调用规则：
 1) 学生提交作业：必须先调用 execute_strategy_engine(action="check_error_book") + get_user_comprehensive_profile(scope="basic")。
 2) 学生提问显初级：调用 get_user_comprehensive_profile(scope="basic")，根据年级/基础调整语气。
 3) 需要能力画像时：调用 get_user_comprehensive_profile(scope="academic")。
-4) 进行学业评价、课程目标达成、毕业要求达成相关分析时：优先调用 fetch_external_student_academic_data(action="summary") 获取本人课程目标达成与成绩数据。
-5) 若需分析单门课程：使用 fetch_external_student_academic_data(action="course_objectives"/"course_achievements", offering_id=...) 获取证据。
+4) 进行学业评价、课程目标达成、毕业要求达成相关分析时：优先调用 fetch_dm_student_academic_data(action="summary") 获取本人课程目标达成与成绩数据。
+5) 若需分析单门课程：使用 fetch_dm_student_academic_data(action="course_objectives"/"course_achievements", offering_id=...) 获取证据。
 6) 工具调用必须 JSON 输出，未获取工具结果前不得给最终回复。
-7) 仅能评价当前登录学生，不得请求或推测其他同学数据；工具返回为空需说明“暂无外部系统数据”。
+7) 仅能评价当前登录学生，不得请求或推测其他同学数据；工具返回为空需说明“暂无本地读库数据”。
 
 输出结构（必须按顺序）：
 1) 现状诊断：指出主要问题或亮点（基于工具结果）。
@@ -197,7 +197,7 @@ AGENT_ALLOWED_TOOLS = {
         "get_user_comprehensive_profile",
         "query_institutional_database",
         "execute_strategy_engine",
-        "fetch_external_student_academic_data",
+        "fetch_dm_student_academic_data",
     },
     "task": {
         "get_user_comprehensive_profile",

@@ -211,6 +211,20 @@ class CourseOut(BaseModel):
         from_attributes = True
 
 
+class DMSyncRequest(BaseModel):
+    job_name: str = "dm_sync_manual"
+    entities: list[str] | None = None
+    term_window: list[str] | None = None
+    batch_size: int | None = None
+
+
+class DMSyncResponse(BaseModel):
+    job_id: str
+    job_name: str
+    status: str
+    detail: dict
+
+
 class AdminUserOut(BaseModel):
     id: int
     username: str

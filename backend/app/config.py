@@ -31,6 +31,11 @@ EXTERNAL_JWT_AUDIENCE = os.environ.get("EXTERNAL_JWT_AUDIENCE", "course-analysis
 EXTERNAL_JWT_EXPIRE_MINUTES = int(os.environ.get("EXTERNAL_JWT_EXPIRE_MINUTES", "60"))
 EXTERNAL_API_TIMEOUT = float(os.environ.get("EXTERNAL_API_TIMEOUT", "6"))
 
+ACHIEVE_DB_DSN = os.environ.get("ACHIEVE_DB_DSN", "")
+SYNC_TERM_WINDOW = os.environ.get("SYNC_TERM_WINDOW", "")
+SYNC_BATCH_SIZE = int(os.environ.get("SYNC_BATCH_SIZE", "2000"))
+SYNC_SCHEDULE_CRON = os.environ.get("SYNC_SCHEDULE_CRON", "0 3 * * *")
+
 
 def get_agent_credentials(agent: str) -> tuple[str, str]:
     prefix = AGENT_ENV_PREFIXES.get(agent)

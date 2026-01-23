@@ -1,4 +1,16 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Table, Text, func
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Table,
+    Text,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 
 from .db import Base
@@ -251,3 +263,253 @@ class AgentRunTrace(Base):
     request_text = Column(Text, nullable=True)
     trace = Column(JSONB, nullable=False, default=list)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DmStudent(Base):
+    __tablename__ = "students"
+    __table_args__ = {"schema": "dm"}
+
+    student_id = Column(Integer, primary_key=True)
+    student_no = Column(String(50), nullable=False, index=True)
+    full_name = Column(String(100), nullable=False)
+    program_id = Column(Integer, nullable=True)
+    grade_id = Column(Integer, nullable=True)
+    class_name = Column(String(50), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DmStudentIdentityMap(Base):
+    __tablename__ = "student_identity_map"
+    __table_args__ = (
+        Index("idx_dm_identity_user", "user_id"),
+        Index("idx_dm_identity_student_no", "student_no"),
+        {"schema": "dm"},
+    )
+
+    user_id = Column(Integer, primary_key=True)
+    student_no = Column(String(50), nullable=False)
+    student_id = Column(Integer, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class DmProgram(Base):
+    __tablename__ = "programs"
+    __table_args__ = {"schema": "dm"}
+
+    program_id = Column(Integer, primary_key=True)
+    program_code = Column(String(50), nullable=True)
+    name = Column(String(255), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DmProgramVersion(Base):
+    __tablename__ = "program_versions"
+    __table_args__ = {"schema": "dm"}
+
+    program_version_id = Column(Integer, primary_key=True)
+    program_id = Column(Integer, nullable=False, index=True)
+    version_name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DmProgramVersionCourse(Base):
+    __tablename__ = "program_version_courses"
+    __table_args__ = (
+        Index("idx_dm_pvc_program_version", "program_version_id"),
+        Index("idx_dm_pvc_course", "course_id"),
+        {"schema": "dm"},
+    )
+
+    program_version_id = Column(Integer, primary_key=True)
+    course_id = Column(Integer, primary_key=True)
+    course_category = Column(String(50), nullable=True)
+    course_nature = Column(String(50), nullable=True)
+    planned_semester = Column(String(20), nullable=True)
+    plan_remarks = Column(Text, nullable=True)
+    display_order_label = Column(String(50), nullable=True)
+    display_order_primary = Column(Integer, nullable=True)
+    display_order_secondary = Column(Integer, nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DmCourse(Base):
+    __tablename__ = "courses"
+    __table_args__ = {"schema": "dm"}
+
+    course_id = Column(Integer, primary_key=True)
+    course_code = Column(String(50), nullable=True, index=True)
+    course_name = Column(String(255), nullable=False)
+    credits = Column(Numeric(4, 2), nullable=True)
+    total_hours = Column(Integer, nullable=True)
+    lecture_hours = Column(Integer, nullable=True)
+    experiment_hours = Column(Integer, nullable=True)
+    practice_hours = Column(Integer, nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DmAcademicTerm(Base):
+    __tablename__ = "academic_terms"
+    __table_args__ = {"schema": "dm"}
+
+    term_id = Column(Integer, primary_key=True)
+    term_name = Column(String(100), nullable=False)
+    start_year = Column(Integer, nullable=True)
+    end_year = Column(Integer, nullable=True)
+    term_index = Column(Integer, nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DmCourseOffering(Base):
+    __tablename__ = "course_offerings"
+    __table_args__ = (
+        Index("idx_dm_offering_term", "term_id"),
+        Index("idx_dm_offering_course", "course_id"),
+        {"schema": "dm"},
+    )
+
+    offering_id = Column(Integer, primary_key=True)
+    course_id = Column(Integer, nullable=False)
+    term_id = Column(Integer, nullable=False)
+    teacher_id = Column(Integer, nullable=True)
+    teacher_name = Column(String(100), nullable=True)
+    section_name = Column(String(50), nullable=True)
+    class_number = Column(String(100), nullable=True)
+    program_id = Column(Integer, nullable=True)
+    grade_year = Column(Integer, nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DmEnrollment(Base):
+    __tablename__ = "enrollments"
+    __table_args__ = (
+        Index("idx_dm_enrollment_student", "student_no"),
+        {"schema": "dm"},
+    )
+
+    offering_id = Column(Integer, primary_key=True)
+    student_id = Column(Integer, primary_key=True)
+    student_no = Column(String(50), nullable=False)
+    enrolled_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DmStudentScore(Base):
+    __tablename__ = "student_scores"
+    __table_args__ = (
+        Index("idx_dm_score_student", "student_no"),
+        Index("idx_dm_score_offering", "offering_id"),
+        {"schema": "dm"},
+    )
+
+    offering_id = Column(Integer, primary_key=True)
+    student_id = Column(Integer, primary_key=True)
+    student_no = Column(String(50), nullable=False)
+    total_score = Column(Numeric(5, 2), nullable=True)
+    grade_text = Column(String(50), nullable=True)
+    score_source = Column(String(20), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DmSectionGradeSummary(Base):
+    __tablename__ = "section_grade_summary"
+    __table_args__ = {"schema": "dm"}
+
+    offering_id = Column(Integer, primary_key=True)
+    term_id = Column(Integer, nullable=True)
+    n_students = Column(Integer, nullable=False, default=0)
+    avg_score = Column(Numeric(5, 2), nullable=True)
+    min_score = Column(Numeric(5, 2), nullable=True)
+    max_score = Column(Numeric(5, 2), nullable=True)
+    dist_json = Column(JSONB, nullable=False, default=dict)
+    computed_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DmSyllabusVersion(Base):
+    __tablename__ = "syllabus_versions"
+    __table_args__ = {"schema": "dm"}
+
+    syllabus_version_id = Column(Integer, primary_key=True)
+    course_id = Column(Integer, nullable=False)
+    version_name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+    is_default = Column(Boolean, default=False)
+    syllabus_type = Column(String(20), nullable=True)
+    status = Column(String(20), nullable=True)
+    basic_info = Column(Text, nullable=True)
+    process_requirements = Column(Text, nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DmCourseObjective(Base):
+    __tablename__ = "course_objectives"
+    __table_args__ = (
+        Index("idx_dm_objective_offering", "offering_id"),
+        Index("idx_dm_objective_course", "course_id"),
+        {"schema": "dm"},
+    )
+
+    objective_id = Column(Integer, primary_key=True)
+    course_id = Column(Integer, nullable=True)
+    offering_id = Column(Integer, nullable=True)
+    syllabus_version_id = Column(Integer, nullable=True)
+    objective_index = Column(String(20), nullable=True)
+    description = Column(Text, nullable=False)
+    objective_type = Column(String(20), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DmStudentObjectiveAchievement(Base):
+    __tablename__ = "student_objective_achievements"
+    __table_args__ = (
+        Index("idx_dm_student_objective_student", "student_no"),
+        Index("idx_dm_student_objective_offering", "offering_id"),
+        {"schema": "dm"},
+    )
+
+    offering_id = Column(Integer, primary_key=True)
+    student_id = Column(Integer, primary_key=True)
+    objective_id = Column(Integer, primary_key=True)
+    student_no = Column(String(50), nullable=False)
+    achievement_score = Column(Numeric(5, 4), nullable=False)
+    total_score = Column(Numeric(5, 2), nullable=False)
+    max_score = Column(Numeric(5, 2), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DmSectionObjectiveSummary(Base):
+    __tablename__ = "section_objective_summary"
+    __table_args__ = {"schema": "dm"}
+
+    offering_id = Column(Integer, primary_key=True)
+    objective_id = Column(Integer, primary_key=True)
+    n_students = Column(Integer, nullable=False, default=0)
+    avg_score = Column(Numeric(5, 4), nullable=True)
+    min_score = Column(Numeric(5, 4), nullable=True)
+    max_score = Column(Numeric(5, 4), nullable=True)
+    computed_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class OpsSyncWatermark(Base):
+    __tablename__ = "sync_watermark"
+    __table_args__ = {"schema": "ops"}
+
+    source_name = Column(String(50), primary_key=True)
+    entity_name = Column(String(50), primary_key=True)
+    last_updated_at = Column(DateTime(timezone=True), nullable=True)
+    last_pk = Column(String(100), nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class OpsSyncJobLog(Base):
+    __tablename__ = "sync_job_log"
+    __table_args__ = {"schema": "ops"}
+
+    job_id = Column(String(36), primary_key=True)
+    job_name = Column(String(100), nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=False)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(20), nullable=False)
+    detail = Column(JSONB, nullable=False, default=dict)
