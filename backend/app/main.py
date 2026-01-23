@@ -7,7 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from .config import CORS_ORIGINS
 from .db import Base, SessionLocal, engine
 from .models import User
-from .routers import admin, auth, chat, conversations, courses, dm, export, knowledge, memory, rag, tools
+from .routers import admin, auth, chat, conversations, courses, dm, export, knowledge, memory, profile, rag, tools
 from .security import hash_password
 from .services.dm_bootstrap import ensure_dm_rls, ensure_dm_schemas
 
@@ -65,6 +65,7 @@ app.include_router(memory.router)
 app.include_router(export.router)
 app.include_router(courses.router)
 app.include_router(dm.router)
+app.include_router(profile.router)
 app.include_router(knowledge.router)
 app.include_router(rag.router)
 app.include_router(tools.router)

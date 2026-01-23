@@ -13,6 +13,10 @@ class UserOut(BaseModel):
     id: int
     username: str
     email: str | None = None
+    full_name: str | None = None
+    major: str | None = None
+    grade: int | None = None
+    gender: str | None = None
 
     class Config:
         from_attributes = True
@@ -230,6 +234,10 @@ class AdminUserOut(BaseModel):
     username: str
     email: str | None = None
     is_active: bool | None = None
+    full_name: str | None = None
+    major: str | None = None
+    grade: int | None = None
+    gender: str | None = None
 
     class Config:
         from_attributes = True
@@ -238,6 +246,71 @@ class AdminUserOut(BaseModel):
 class AdminUserProfileOut(BaseModel):
     user_id: int
     data: dict
+
+
+class AdminUserProfilesOut(BaseModel):
+    user_id: int
+    system_profile: str | None = None
+    public_profile: str | None = None
+    system_updated_at: datetime | None = None
+    public_updated_at: datetime | None = None
+
+
+class AdminUserUpdate(BaseModel):
+    email: str | None = None
+    full_name: str | None = None
+    major: str | None = None
+    grade: int | None = None
+    gender: str | None = None
+    is_active: bool | None = None
+
+
+class AdminUserImportResult(BaseModel):
+    total: int
+    created: int
+    updated: int
+    failed: int
+    errors: list[str] = Field(default_factory=list)
+
+
+class UserProfileOut(BaseModel):
+    content: str | None = None
+    updated_at: datetime | None = None
+
+
+class UserCourseOut(BaseModel):
+    offering_id: int
+    course_code: str
+    course_name: str
+    teacher_name: str | None = None
+    total_score: float | None = None
+    grade_text: str | None = None
+    percentile: float | None = None
+
+
+class UserCourseObjectiveOut(BaseModel):
+    objective_id: int
+    objective_index: str | None = None
+    description: str
+    achievement_score: float | None = None
+    total_score: float | None = None
+    max_score: float | None = None
+    percentile: float | None = None
+
+
+class UserCourseReportOut(BaseModel):
+    content: str | None = None
+    updated_at: datetime | None = None
+
+
+class UserAcademicReportOut(BaseModel):
+    content: str | None = None
+    updated_at: datetime | None = None
+
+
+class UserGraduationRequirementOut(BaseModel):
+    data: dict
+    updated_at: datetime | None = None
 
 
 class AdminAgentOut(BaseModel):

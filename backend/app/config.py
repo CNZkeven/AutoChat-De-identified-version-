@@ -24,6 +24,18 @@ SUMMARY_API_KEY = os.environ.get("SUMMARY_API_KEY", "")
 SUMMARY_BASE_URL = os.environ.get("SUMMARY_BASE_URL", "")
 SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "")
 
+SYSTEM_PROFILE_API_KEY = os.environ.get("SYSTEM_PROFILE_API_KEY", "")
+SYSTEM_PROFILE_BASE_URL = os.environ.get("SYSTEM_PROFILE_BASE_URL", "")
+SYSTEM_PROFILE_MODEL = os.environ.get("SYSTEM_PROFILE_MODEL", "")
+
+USER_PROFILE_API_KEY = os.environ.get("USER_PROFILE_API_KEY", "")
+USER_PROFILE_BASE_URL = os.environ.get("USER_PROFILE_BASE_URL", "")
+USER_PROFILE_MODEL = os.environ.get("USER_PROFILE_MODEL", "")
+
+REPORT_API_KEY = os.environ.get("REPORT_API_KEY", "")
+REPORT_BASE_URL = os.environ.get("REPORT_BASE_URL", "")
+REPORT_MODEL = os.environ.get("REPORT_MODEL", "")
+
 EXTERNAL_API_BASE_URL = os.environ.get("EXTERNAL_API_BASE_URL", "http://localhost:3000")
 EXTERNAL_JWT_SECRET = os.environ.get("EXTERNAL_JWT_SECRET", "external-jwt-dev-secret")
 EXTERNAL_JWT_ISSUER = os.environ.get("EXTERNAL_JWT_ISSUER", "external-system")

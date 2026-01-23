@@ -36,6 +36,10 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     username = Column(String(64), unique=True, nullable=False, index=True)
     email = Column(String(100), unique=True, nullable=True, index=True)
+    full_name = Column(String(100), nullable=True, index=True)
+    major = Column(String(100), nullable=True, index=True)
+    grade = Column(Integer, nullable=True, index=True)
+    gender = Column(String(10), nullable=True, index=True)
     hashed_password = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -88,6 +92,78 @@ class UserProfile(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     data = Column(JSONB, nullable=False, default=dict)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class UserSystemProfile(Base):
+    __tablename__ = "user_system_profiles"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    source_snapshot = Column(JSONB, nullable=False, default=dict)
+    model = Column(String(100), nullable=True)
+    prompt_version = Column(String(50), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (Index("ix_user_system_profiles_user", "user_id"),)
+
+
+class UserPublicProfile(Base):
+    __tablename__ = "user_public_profiles"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    source_snapshot = Column(JSONB, nullable=False, default=dict)
+    model = Column(String(100), nullable=True)
+    prompt_version = Column(String(50), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (Index("ix_user_public_profiles_user", "user_id"),)
+
+
+class UserCourseReport(Base):
+    __tablename__ = "user_course_reports"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    offering_id = Column(Integer, nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    source_snapshot = Column(JSONB, nullable=False, default=dict)
+    model = Column(String(100), nullable=True)
+    prompt_version = Column(String(50), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (Index("ix_user_course_reports_user_offering", "user_id", "offering_id"),)
+
+
+class UserAcademicReport(Base):
+    __tablename__ = "user_academic_reports"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True)
+    content = Column(Text, nullable=False)
+    source_snapshot = Column(JSONB, nullable=False, default=dict)
+    model = Column(String(100), nullable=True)
+    prompt_version = Column(String(50), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class UserGraduationRequirementSnapshot(Base):
+    __tablename__ = "user_graduation_requirement_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True)
+    program_id = Column(Integer, nullable=True, index=True)
+    grade_year = Column(Integer, nullable=True, index=True)
+    data = Column(JSONB, nullable=False, default=dict)
+    source_snapshot = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
