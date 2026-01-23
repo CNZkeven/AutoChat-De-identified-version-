@@ -3,21 +3,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..config import ACHIEVE_DB_DSN
 from ..models import User, UserGraduationRequirementSnapshot
 from ..services.academics import set_dm_role
 
 ACHIEVEMENT_THRESHOLD = 0.67
-
-
-def _get_achieve_engine() -> Engine:
-    if not ACHIEVE_DB_DSN:
-        raise RuntimeError("ACHIEVE_DB_DSN is not configured")
-    return create_engine(ACHIEVE_DB_DSN)
 
 
 def _fetch_program_id(db: Session, student_no: str) -> dict[str, Any]:
@@ -31,27 +23,30 @@ SELECT student_id, program_id, grade_id
     return dict(row) if row else {}
 
 
-def _fetch_requirements(engine: Engine, program_id: int) -> list[dict[str, Any]]:
+def _fetch_requirements(db: Session, program_id: int) -> list[dict[str, Any]]:
     sql = """
-SELECT id, index, description, level, parent_id
-  FROM graduation_requirements
+SELECT requirement_id AS id,
+       requirement_index AS index,
+       description,
+       level,
+       parent_id,
+       training_program_version_id
+  FROM dm.graduation_requirements
  WHERE program_id = :program_id
- ORDER BY level ASC, index ASC
+ ORDER BY level ASC NULLS LAST, requirement_index ASC NULLS LAST
 """
-    with engine.connect() as conn:
-        rows = conn.execute(text(sql), {"program_id": program_id}).mappings().all()
+    rows = db.execute(text(sql), {"program_id": program_id}).mappings().all()
     return [dict(row) for row in rows]
 
 
-def _fetch_requirement_mappings(engine: Engine, program_id: int) -> list[dict[str, Any]]:
+def _fetch_requirement_mappings(db: Session, program_id: int) -> list[dict[str, Any]]:
     sql = """
 SELECT orm.objective_id, orm.requirement_id
-  FROM objective_requirement_mapping orm
-  JOIN graduation_requirements gr ON gr.id = orm.requirement_id
+  FROM dm.objective_requirement_mapping orm
+  JOIN dm.graduation_requirements gr ON gr.requirement_id = orm.requirement_id
  WHERE gr.program_id = :program_id
 """
-    with engine.connect() as conn:
-        rows = conn.execute(text(sql), {"program_id": program_id}).mappings().all()
+    rows = db.execute(text(sql), {"program_id": program_id}).mappings().all()
     return [dict(row) for row in rows]
 
 
@@ -77,9 +72,8 @@ def build_requirement_snapshot(db: Session, user: User) -> dict[str, Any]:
             "summary": {"total": 0, "achieved": 0, "threshold": ACHIEVEMENT_THRESHOLD},
         }
 
-    engine = _get_achieve_engine()
-    requirements = _fetch_requirements(engine, program_id)
-    mappings = _fetch_requirement_mappings(engine, program_id)
+    requirements = _fetch_requirements(db, program_id)
+    mappings = _fetch_requirement_mappings(db, program_id)
     student_scores = _fetch_student_objective_scores(db, student_no)
 
     score_map: dict[int, list[float]] = {}

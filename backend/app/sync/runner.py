@@ -198,6 +198,93 @@ SET program_id = EXCLUDED.program_id,
     return {"rows": len(rows), "updated_at": max_updated}
 
 
+def _sync_graduation_requirements(achieve_conn, local_conn, batch_size: int) -> dict[str, Any]:
+    last_updated = _get_watermark(local_conn, "graduation_requirements")
+    params = {"updated_after": last_updated}
+    sql = """
+SELECT id AS requirement_id,
+       program_id,
+       index AS requirement_index,
+       description,
+       level,
+       parent_id,
+       training_program_version_id,
+       updated_at
+  FROM graduation_requirements
+ WHERE updated_at > COALESCE(:updated_after, 'epoch'::timestamptz)
+"""
+    rows = _fetch_rows(achieve_conn, sql, params)
+    if not rows:
+        return {"rows": 0, "updated_at": last_updated}
+    insert_sql = text(
+        """
+INSERT INTO dm.graduation_requirements(
+    requirement_id,
+    program_id,
+    requirement_index,
+    description,
+    level,
+    parent_id,
+    training_program_version_id,
+    updated_at
+) VALUES (
+    :requirement_id,
+    :program_id,
+    :requirement_index,
+    :description,
+    :level,
+    :parent_id,
+    :training_program_version_id,
+    :updated_at
+)
+ON CONFLICT (requirement_id) DO UPDATE
+SET program_id = EXCLUDED.program_id,
+    requirement_index = EXCLUDED.requirement_index,
+    description = EXCLUDED.description,
+    level = EXCLUDED.level,
+    parent_id = EXCLUDED.parent_id,
+    training_program_version_id = EXCLUDED.training_program_version_id,
+    updated_at = EXCLUDED.updated_at
+"""
+    )
+    for chunk in _chunked(rows, batch_size):
+        local_conn.execute(insert_sql, chunk)
+    max_updated = max(row["updated_at"] for row in rows if row.get("updated_at"))
+    return {"rows": len(rows), "updated_at": max_updated}
+
+
+def _sync_objective_requirement_mapping(achieve_conn, local_conn, batch_size: int) -> dict[str, Any]:
+    last_updated = _get_watermark(local_conn, "objective_requirement_mapping")
+    params = {"updated_after": last_updated}
+    sql = """
+SELECT objective_id,
+       requirement_id,
+       weight,
+       updated_at
+  FROM objective_requirement_mapping
+ WHERE updated_at > COALESCE(:updated_after, 'epoch'::timestamptz)
+"""
+    rows = _fetch_rows(achieve_conn, sql, params)
+    if not rows:
+        return {"rows": 0, "updated_at": last_updated}
+    insert_sql = text(
+        """
+INSERT INTO dm.objective_requirement_mapping(
+    objective_id, requirement_id, weight, updated_at
+) VALUES (
+    :objective_id, :requirement_id, :weight, :updated_at
+)
+ON CONFLICT (objective_id, requirement_id) DO UPDATE
+SET weight = EXCLUDED.weight,
+    updated_at = EXCLUDED.updated_at
+"""
+    )
+    for chunk in _chunked(rows, batch_size):
+        local_conn.execute(insert_sql, chunk)
+    max_updated = max(row["updated_at"] for row in rows if row.get("updated_at"))
+    return {"rows": len(rows), "updated_at": max_updated}
+
+
 def _sync_program_version_courses(achieve_conn, local_conn, batch_size: int) -> dict[str, Any]:
     last_updated = _get_watermark(local_conn, "program_version_courses")
     params = {"updated_after": last_updated}
@@ -733,6 +820,7 @@ def run_dm_sync(
         "students",
         "programs",
         "program_versions",
+        "graduation_requirements",
         "program_version_courses",
         "courses",
         "academic_terms",
@@ -741,6 +829,7 @@ def run_dm_sync(
         "student_scores",
         "syllabus_versions",
         "course_objectives",
+        "objective_requirement_mapping",
         "objective_achievements",
     ]
 
@@ -754,6 +843,8 @@ def run_dm_sync(
                     result = _sync_programs(achieve_conn, local_conn, batch)
                 elif entity == "program_versions":
                     result = _sync_program_versions(achieve_conn, local_conn, batch)
+                elif entity == "graduation_requirements":
+                    result = _sync_graduation_requirements(achieve_conn, local_conn, batch)
                 elif entity == "program_version_courses":
                     result = _sync_program_version_courses(achieve_conn, local_conn, batch)
                 elif entity == "courses":
@@ -770,6 +861,8 @@ def run_dm_sync(
                     result = _sync_syllabus_versions(achieve_conn, local_conn, batch)
                 elif entity == "course_objectives":
                     result = _sync_course_objectives(achieve_conn, local_conn, batch)
+                elif entity == "objective_requirement_mapping":
+                    result = _sync_objective_requirement_mapping(achieve_conn, local_conn, batch)
                 elif entity == "objective_achievements":
                     result = _sync_objective_achievements(achieve_conn, local_conn, batch, terms)
                 else:

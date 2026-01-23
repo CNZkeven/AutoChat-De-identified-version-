@@ -537,6 +537,36 @@ class DmCourseObjective(Base):
     updated_at = Column(DateTime(timezone=True), nullable=True)
 
 
+class DmGraduationRequirement(Base):
+    __tablename__ = "graduation_requirements"
+    __table_args__ = (
+        Index("idx_dm_gr_requirement_program", "program_id"),
+        {"schema": "dm"},
+    )
+
+    requirement_id = Column(Integer, primary_key=True)
+    program_id = Column(Integer, nullable=False, index=True)
+    requirement_index = Column(String(50), nullable=True)
+    description = Column(Text, nullable=False)
+    level = Column(Integer, nullable=True)
+    parent_id = Column(Integer, nullable=True)
+    training_program_version_id = Column(Integer, nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DmObjectiveRequirementMapping(Base):
+    __tablename__ = "objective_requirement_mapping"
+    __table_args__ = (
+        Index("idx_dm_objective_requirement_requirement", "requirement_id"),
+        {"schema": "dm"},
+    )
+
+    objective_id = Column(Integer, primary_key=True)
+    requirement_id = Column(Integer, primary_key=True)
+    weight = Column(Numeric(3, 2), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class DmStudentObjectiveAchievement(Base):
     __tablename__ = "student_objective_achievements"
     __table_args__ = (
