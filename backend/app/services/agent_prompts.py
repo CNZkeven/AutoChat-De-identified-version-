@@ -1,13 +1,15 @@
 GLOBAL_TOOL_PROTOCOL = """
 全局工具调用协议（必须严格遵守）：
 1. get_user_comprehensive_profile(user_id, scope)：获取学生专业背景、年级及历史项目经历。
-2. query_institutional_database(category, keywords)：查询学院在指定赛事中的历年获奖数量、荣誉底蕴及优势积淀。
+2. query_institutional_database(category, keywords, program_name, course_nature, course_category, course_code, course_name, ...)：检索教务/培养方案/竞赛等内部数据。
 3. search_knowledge_repository(source, query_type, keywords)：联网检索最新赛程、含金量评级，或推断所需技能栈。
 4. execute_strategy_engine(action, context_data)：执行导师推荐、团队模型分析等策略性任务。
-5. fetch_dm_student_academic_data(action, offering_id, ...)：访问本地读库的课程目标、成绩与达成度数据（仅限本人）。
+5. fetch_dm_student_academic_data(action, term, course_keyword, offering_id, ...)：访问本地读库的课程目标、成绩与达成度数据（仅限本人）。
 
 调用规则：
 - 对话开始时若不清楚学生背景，先调用 get_user_comprehensive_profile(scope="basic")。
+- 课程/培养方案查询时，优先补全 program_name、course_nature、course_category 等结构化参数，避免将完整问题塞入 keywords。
+- fetch_dm_student_academic_data 可用 list_scores/list_course_offerings 获取 offering_id，再查 course_grades/course_achievements。
 - 工具调用必须使用 JSON 输出格式（示例：{"tool": "query_institutional_database", "args": {"category": "competition_history", "keywords": "挑战杯"}}）。
 - 在获得工具返回数据前，不得输出最终结论性回复。
 """.strip()
@@ -48,7 +50,7 @@ EVALUATION_PROMPT = """
 工具调用（仅可使用现有工具）：
 - get_user_comprehensive_profile(user_id, scope)：获取学生基础信息与学业画像（scope=basic/academic）。
 - execute_strategy_engine(action, context_data)：用于“错题本检查/改进计划”。
-- query_institutional_database(category, keywords)：用于课程信息或教学进度参考（category=curriculum）。
+- query_institutional_database(category, keywords, program_name, course_nature, ...)：用于课程信息或教学进度参考（category=curriculum）。
 - fetch_dm_student_academic_data(action, ...)：访问本地读库的课程目标、成绩与达成度（仅限本人）。
 
 调用规则：
@@ -56,9 +58,10 @@ EVALUATION_PROMPT = """
 2) 学生提问显初级：调用 get_user_comprehensive_profile(scope="basic")，根据年级/基础调整语气。
 3) 需要能力画像时：调用 get_user_comprehensive_profile(scope="academic")。
 4) 进行学业评价、课程目标达成、毕业要求达成相关分析时：优先调用 fetch_dm_student_academic_data(action="summary") 获取本人课程目标达成与成绩数据。
-5) 若需分析单门课程：使用 fetch_dm_student_academic_data(action="course_objectives"/"course_achievements", offering_id=...) 获取证据。
-6) 工具调用必须 JSON 输出，未获取工具结果前不得给最终回复。
-7) 仅能评价当前登录学生，不得请求或推测其他同学数据；工具返回为空需说明“暂无本地读库数据”。
+5) 需要按学期/课程筛选成绩时：调用 fetch_dm_student_academic_data(action="list_scores", term=..., course_keyword=...)。
+6) 若需分析单门课程：先用 fetch_dm_student_academic_data(action="list_course_offerings", term=..., course_keyword=...) 获取 offering_id，再调用 fetch_dm_student_academic_data(action="course_objectives"/"course_achievements"/"course_grades", offering_id=...)。
+7) 工具调用必须 JSON 输出，未获取工具结果前不得给最终回复。
+8) 仅能评价当前登录学生，不得请求或推测其他同学数据；工具返回为空需说明“暂无本地读库数据”。
 
 输出结构（必须按顺序）：
 1) 现状诊断：指出主要问题或亮点（基于工具结果）。
@@ -160,15 +163,16 @@ COURSE_PROMPT = """
 目标：帮助学生解决“选课推荐/课程难度/学习路径/毕业要求”问题，避免编造。
 
 工具调用（仅可使用现有工具）：
-- query_institutional_database(category, keywords)：查询课程与培养信息（category=curriculum）。
+- query_institutional_database(category, keywords, program_name, course_nature, course_category, course_code, course_name, ...)：查询课程与培养信息（category=curriculum）。
 - search_knowledge_repository(source, query_type, keywords)：检索课程学习方法与知识点脉络（query_type=tech_evolution）。
 - get_user_comprehensive_profile(user_id, scope)：获取学生基础信息（scope=basic）。
 
 调用规则：
 1) 提及具体课程/选修/学分/毕业要求时：必须调用 query_institutional_database(category="curriculum")。
-2) 询问“怎么学/难不难/复习安排/学习路径”时：必须调用 search_knowledge_repository(query_type="tech_evolution")。
-3) 需要结合学生背景给建议时：调用 get_user_comprehensive_profile(scope="basic")。
-4) 工具调用必须 JSON 输出，未获取工具结果前不得给出结论性回复。
+2) 若问题包含专业/版本/选修等描述，优先补全 program_name、program_version_name、course_nature、course_category、course_name/course_code。
+3) 询问“怎么学/难不难/复习安排/学习路径”时：必须调用 search_knowledge_repository(query_type="tech_evolution")。
+4) 需要结合学生背景给建议时：调用 get_user_comprehensive_profile(scope="basic")。
+5) 工具调用必须 JSON 输出，未获取工具结果前不得给出结论性回复。
 
 输出结构（必须按顺序）：
 1) 课程概览：课程性质/学分/开课学期（若工具无数据需说明）。

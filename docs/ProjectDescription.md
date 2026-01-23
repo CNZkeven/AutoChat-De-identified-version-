@@ -7,12 +7,15 @@ Docker Compose is the default dev entrypoint; `scripts/start.sh` wraps `docker c
 Recent upgrades added a unified orchestrator pipeline (plan → tool execution → synthesis), agent profiles with routing hints,
 tool contracts and sanitization, Redis-backed caching for tool reads, and agent run replay logs for audit and evaluation.
 Academic data now syncs from Achieve into the local dm schema, and agents read via internal dm tools (no external API calls).
+课程/学业查询工具已扩展结构化过滤参数（专业/版本/课程性质/类别/课程名/课程号），并补充学业成绩的 list_scores 能力，
+同时完善了工具日志与回放记录的序列化稳定性。
 
 ## Docker Compose
 - Recommended cross-platform dev entrypoint: `cp .env.example .env` then `./scripts/start.sh` (or `docker compose up --build`).
 - Services include Postgres, FastAPI backend, and the Vite React frontend.
 - Backend health check endpoint: `GET /health`.
 - `scripts/start.sh` 会在 5433-5499 范围内自动选择可用端口并记录到 `.logs/compose-ports.env`。
+- 前端端口固定为 5174，若被占用会在启动前清理占用进程。
 
 ## React Frontend Notes
 - Frontend is implemented only in `frontend-react` (legacy `frontend` directory removed).

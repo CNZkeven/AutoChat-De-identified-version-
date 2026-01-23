@@ -746,7 +746,7 @@ def run_dm_sync(
 
     try:
         with achieve_engine.connect() as achieve_conn, local_engine.begin() as local_conn:
-            local_conn.execute(text("SET LOCAL app.role = 'sync'"))
+            local_conn.execute(text("SELECT set_config('app.role', 'sync', true)"))
             for entity in entity_list:
                 if entity == "students":
                     result = _sync_students(achieve_conn, local_conn, batch)

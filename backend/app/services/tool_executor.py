@@ -1,8 +1,9 @@
 import json
 import logging
+import re
 from typing import Any
 
-from sqlalchemy import or_, text
+from sqlalchemy import String, bindparam, or_, text
 from sqlalchemy.orm import Session
 
 from ..models import Course, Knowledge, User, UserProfile
@@ -24,9 +25,15 @@ DEFAULT_MAX_TEXT = 800
 
 def _set_dm_session_context(db: Session, student_no: str | None, role: str | None) -> None:
     if student_no:
-        db.execute(text("SET LOCAL app.student_no = :student_no"), {"student_no": student_no})
+        db.execute(
+            text("SELECT set_config('app.student_no', :student_no, true)"),
+            {"student_no": student_no},
+        )
     if role:
-        db.execute(text("SET LOCAL app.role = :role"), {"role": role})
+        db.execute(
+            text("SELECT set_config('app.role', :role, true)"),
+            {"role": role},
+        )
 
 
 def _validate_args(schema: dict[str, Any] | None, args: dict[str, Any]) -> list[str]:
@@ -117,6 +124,12 @@ def execute_tool_call(
     args: dict[str, Any],
     db: Session,
 ) -> dict[str, Any]:
+    def _clean_text(value: Any) -> str | None:
+        if value is None:
+            return None
+        text_value = str(value).strip()
+        return text_value or None
+
     if tool_name == "get_user_comprehensive_profile":
         user_id = args.get("user_id")
         if isinstance(user_id, str):
@@ -161,49 +174,189 @@ def execute_tool_call(
         return result
 
     if tool_name == "query_institutional_database":
-        category = args.get("category")
-        keywords = args.get("keywords", "")
-        cache_payload = {"category": category, "keywords": keywords}
-        if category == "curriculum" and args.get("user_id") is not None:
-            cache_payload["user_id"] = args.get("user_id")
-        cache_key = make_cache_key("tool:query_institutional_database", cache_payload)
-        cached = cache_get(cache_key)
-        if cached is not None:
-            cached["_cache"] = "hit"
-            return cached
+        def _clean_text(value: Any) -> str | None:
+            if value is None:
+                return None
+            text_value = str(value).strip()
+            return text_value or None
+
+        def _clean_text(value: Any) -> str | None:
+            if value is None:
+                return None
+            text_value = str(value).strip()
+            return text_value or None
+
+        def _clean_text(value: Any) -> str | None:
+            if value is None:
+                return None
+            text_value = str(value).strip()
+            return text_value or None
+
+        def _clean_text(value: Any) -> str | None:
+            if value is None:
+                return None
+            text_value = str(value).strip()
+            return text_value or None
+
+        def _clean_text(value: Any) -> str | None:
+            if value is None:
+                return None
+            text_value = str(value).strip()
+            return text_value or None
+
+        def _coerce_int(value: Any) -> int | None:
+            if value is None:
+                return None
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str) and value.isdigit():
+                return int(value)
+            return None
+
+        def _to_bool(value: Any) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "y"}
+            return False
+
+        category = _clean_text(args.get("category"))
+        keywords = _clean_text(args.get("keywords"))
+        program_id = _coerce_int(args.get("program_id"))
+        program_version_id = _coerce_int(args.get("program_version_id"))
+        program_name = _clean_text(args.get("program_name"))
+        program_version_name = _clean_text(args.get("program_version_name"))
+        course_nature = _clean_text(args.get("course_nature"))
+        course_category = _clean_text(args.get("course_category"))
+        planned_semester = _clean_text(args.get("planned_semester"))
+        course_code = _clean_text(args.get("course_code"))
+        course_name = _clean_text(args.get("course_name"))
+        limit = _coerce_int(args.get("limit")) or 20
+        limit = max(1, min(limit, 50))
+        include_syllabus = _to_bool(args.get("include_syllabus"))
+        user_id = args.get("user_id")
+
         if category == "curriculum":
-            user_id = args.get("user_id")
             student_no = None
-            if user_id:
+            if user_id is not None:
                 user = db.query(User).filter(User.id == user_id).first()
                 if user and user.username:
                     student_no = user.username
             if student_no:
                 _set_dm_session_context(db, student_no, "student")
+                if program_id is None:
+                    program_row = db.execute(
+                        text("SELECT program_id FROM dm.students WHERE student_no = :student_no LIMIT 1"),
+                        {"student_no": student_no},
+                    ).first()
+                    program_id = program_row[0] if program_row else None
+
+            if keywords and not course_nature:
+                if "选修" in keywords:
+                    course_nature = "选修"
+                elif "必修" in keywords:
+                    course_nature = "必修"
+
+            if keywords and not course_category:
+                if "学科基础" in keywords:
+                    course_category = "学科基础课程"
+                elif "通识" in keywords:
+                    course_category = "通识教育课程"
+                elif "专业" in keywords and ("课程" in keywords or "专业课" in keywords or "专业选修" in keywords):
+                    course_category = "专业课程"
+
+            if not program_name and keywords:
                 program_row = db.execute(
-                    text("SELECT program_id FROM dm.students WHERE student_no = :student_no LIMIT 1"),
-                    {"student_no": student_no},
+                    text(
+                        """
+SELECT program_id, name
+  FROM dm.programs
+ WHERE :keywords ILIKE '%' || name || '%'
+ ORDER BY length(name) DESC
+ LIMIT 1
+"""
+                    ),
+                    {"keywords": keywords},
+                ).first()
+                if program_row:
+                    program_id = program_row[0]
+                    program_name = program_row[1]
+
+            if not program_version_name and keywords:
+                match = re.search(r"(20\\d{2})\\s*版", keywords)
+                if match:
+                    program_version_name = f"{match.group(1)}版"
+
+            if keywords:
+                trimmed = keywords.replace("？", "").replace("?", "").strip()
+                if any(token in trimmed for token in ("有哪些", "有什么", "哪些课程", "哪些课")):
+                    keywords = None
+                elif (course_nature or course_category or program_name or program_id or program_version_id) and any(
+                    token in trimmed for token in ("专业", "选修", "必修", "课程", "学科基础", "通识")
+                ):
+                    keywords = None
+                else:
+                    keywords = trimmed or None
+
+            if program_id is None and program_name:
+                program_row = db.execute(
+                    text(
+                        """
+SELECT program_id
+  FROM dm.programs
+ WHERE name ILIKE :program_name
+ ORDER BY CASE WHEN name = :program_name_exact THEN 0 ELSE 1 END, name ASC
+ LIMIT 1
+"""
+                    ),
+                    {"program_name": f"%{program_name}%", "program_name_exact": program_name},
                 ).first()
                 program_id = program_row[0] if program_row else None
-                program_version_id = None
-                if program_id:
-                    version_row = db.execute(
-                        text(
-                            """
+
+            if program_version_id is None and program_id:
+                version_sql = """
 SELECT program_version_id
   FROM dm.program_versions
  WHERE program_id = :program_id
+   AND (:version_name IS NULL OR version_name ILIKE :version_name)
  ORDER BY is_active DESC, updated_at DESC NULLS LAST
  LIMIT 1
 """
-                        ),
-                        {"program_id": program_id},
-                    ).first()
-                    program_version_id = version_row[0] if version_row else None
+                stmt = text(version_sql).bindparams(bindparam("version_name", type_=String()))
+                version_row = db.execute(
+                    stmt,
+                    {"program_id": program_id, "version_name": program_version_name},
+                ).first()
+                program_version_id = version_row[0] if version_row else None
 
-                if program_version_id:
-                    like = f"%{keywords}%" if keywords else None
-                    sql = """
+            cache_payload = {
+                "category": category,
+                "keywords": keywords,
+                "program_id": program_id,
+                "program_version_id": program_version_id,
+                "program_name": program_name,
+                "program_version_name": program_version_name,
+                "course_nature": course_nature,
+                "course_category": course_category,
+                "planned_semester": planned_semester,
+                "course_code": course_code,
+                "course_name": course_name,
+                "limit": limit,
+                "include_syllabus": include_syllabus,
+            }
+            if user_id is not None:
+                cache_payload["user_id"] = user_id
+            cache_key = make_cache_key("tool:query_institutional_database", cache_payload)
+            cached = cache_get(cache_key)
+            if cached is not None:
+                cached["_cache"] = "hit"
+                return cached
+
+            if program_version_id:
+                keyword_like = f"%{keywords}%" if keywords else None
+                course_code_like = f"%{course_code}%" if course_code else None
+                course_name_like = f"%{course_name}%" if course_name else None
+                sql = """
 SELECT pvc.course_id,
        c.course_code,
        c.course_name,
@@ -216,19 +369,42 @@ SELECT pvc.course_id,
   FROM dm.program_version_courses pvc
   JOIN dm.courses c ON c.course_id = pvc.course_id
  WHERE pvc.program_version_id = :program_version_id
+   AND (:course_nature IS NULL OR pvc.course_nature = :course_nature)
+   AND (:course_category IS NULL OR pvc.course_category = :course_category)
+   AND (:planned_semester IS NULL OR pvc.planned_semester = :planned_semester)
+   AND (:course_code IS NULL OR c.course_code ILIKE :course_code)
+   AND (:course_name IS NULL OR c.course_name ILIKE :course_name)
    AND (:kw IS NULL OR c.course_name ILIKE :kw OR c.course_code ILIKE :kw)
  ORDER BY pvc.display_order_primary NULLS LAST,
           pvc.display_order_secondary NULLS LAST,
           c.course_code ASC
- LIMIT 20
+ LIMIT :limit
 """
-                    rows = db.execute(
-                        text(sql),
-                        {"program_version_id": program_version_id, "kw": like},
-                    ).mappings()
-                    results = []
-                    for row in rows:
-                        item = dict(row)
+                stmt = text(sql).bindparams(
+                    bindparam("kw", type_=String()),
+                    bindparam("course_code", type_=String()),
+                    bindparam("course_name", type_=String()),
+                    bindparam("course_nature", type_=String()),
+                    bindparam("course_category", type_=String()),
+                    bindparam("planned_semester", type_=String()),
+                )
+                rows = db.execute(
+                    stmt,
+                    {
+                        "program_version_id": program_version_id,
+                        "course_nature": course_nature,
+                        "course_category": course_category,
+                        "planned_semester": planned_semester,
+                        "course_code": course_code_like,
+                        "course_name": course_name_like,
+                        "kw": keyword_like,
+                        "limit": limit,
+                    },
+                ).mappings()
+                results = []
+                for row in rows:
+                    item = dict(row)
+                    if include_syllabus:
                         syllabus_row = db.execute(
                             text(
                                 """
@@ -246,36 +422,61 @@ SELECT syllabus_version_id,
                         ).mappings().first()
                         if syllabus_row:
                             item["syllabus"] = dict(syllabus_row)
-                        results.append(item)
-                    result = {
-                        "status": "ok",
-                        "category": category,
-                        "keywords": keywords,
-                        "student_no": student_no,
-                        "program_id": program_id,
-                        "program_version_id": program_version_id,
-                        "results": results,
-                        "source": "dm",
-                    }
-                    cache_set(cache_key, result, INSTITUTION_CACHE_TTL)
-                    result["_cache"] = "miss"
-                    return result
+                    results.append(item)
+                result = {
+                    "status": "ok",
+                    "category": category,
+                    "keywords": keywords,
+                    "student_no": student_no,
+                    "program_id": program_id,
+                    "program_name": program_name,
+                    "program_version_id": program_version_id,
+                    "program_version_name": program_version_name,
+                    "filters": {
+                        "course_nature": course_nature,
+                        "course_category": course_category,
+                        "planned_semester": planned_semester,
+                        "course_code": course_code,
+                        "course_name": course_name,
+                        "limit": limit,
+                    },
+                    "results": results,
+                    "source": "dm",
+                }
+                cache_set(cache_key, result, INSTITUTION_CACHE_TTL)
+                result["_cache"] = "miss"
+                return result
 
             query = db.query(Course)
-            if keywords:
-                like = f"%{keywords}%"
-                query = query.filter(
-                    or_(
-                        Course.course_name.ilike(like),
-                        Course.course_code.ilike(like),
-                        Course.major.ilike(like),
+            if keywords or course_code or course_name:
+                like = f"%{keywords}%" if keywords else None
+                course_code_like = f"%{course_code}%" if course_code else None
+                course_name_like = f"%{course_name}%" if course_name else None
+                filters = []
+                if like:
+                    filters.extend(
+                        [
+                            Course.course_name.ilike(like),
+                            Course.course_code.ilike(like),
+                            Course.major.ilike(like),
+                        ]
                     )
-                )
-            courses = query.order_by(Course.course_code.asc()).limit(10).all()
+                if course_code_like:
+                    filters.append(Course.course_code.ilike(course_code_like))
+                if course_name_like:
+                    filters.append(Course.course_name.ilike(course_name_like))
+                if filters:
+                    query = query.filter(or_(*filters))
+            courses = query.order_by(Course.course_code.asc()).limit(min(limit, 20)).all()
             result = {
                 "status": "ok",
                 "category": category,
                 "keywords": keywords,
+                "filters": {
+                    "course_code": course_code,
+                    "course_name": course_name,
+                    "limit": limit,
+                },
                 "results": [
                     {
                         "course_code": c.course_code,
@@ -296,6 +497,12 @@ SELECT syllabus_version_id,
             return result
 
         if category in {"competition_history", "research_strength"}:
+            cache_payload = {"category": category, "keywords": keywords}
+            cache_key = make_cache_key("tool:query_institutional_database", cache_payload)
+            cached = cache_get(cache_key)
+            if cached is not None:
+                cached["_cache"] = "hit"
+                return cached
             query = db.query(Knowledge)
             if keywords:
                 like = f"%{keywords}%"
@@ -408,6 +615,7 @@ SELECT syllabus_version_id,
 
         actions = {
             "list_course_offerings",
+            "list_scores",
             "course_offering",
             "course_objectives",
             "course_grades",
@@ -422,9 +630,13 @@ SELECT syllabus_version_id,
         min_sample = _coerce_int(args.get("min_sample")) or 10
         include_grades = _to_bool(args.get("include_grades"))
         include_distribution = _to_bool(args.get("include_distribution"))
-        max_offerings = _coerce_int(args.get("max_offerings")) or 8
-        max_offerings = max(1, min(max_offerings, 20))
-        term = args.get("term")
+        max_offerings = _coerce_int(args.get("max_offerings"))
+        summary_limit = max_offerings or 8
+        summary_limit = max(1, min(summary_limit, 20))
+        term = _clean_text(args.get("term"))
+        course_keyword = _clean_text(args.get("course_keyword"))
+        course_code = _clean_text(args.get("course_code"))
+        course_name = _clean_text(args.get("course_name"))
 
         _set_dm_session_context(db, student_no, "student")
 
@@ -443,13 +655,32 @@ SELECT e.offering_id,
   LEFT JOIN dm.academic_terms t ON t.term_id = o.term_id
  WHERE e.student_no = :student_no
    AND (:term IS NULL OR t.term_name = :term)
+   AND (:course_code IS NULL OR c.course_code ILIKE :course_code)
+   AND (:course_name IS NULL OR c.course_name ILIKE :course_name)
+   AND (
+       :course_keyword IS NULL
+       OR c.course_name ILIKE :course_keyword
+       OR c.course_code ILIKE :course_keyword
+   )
  ORDER BY t.term_name DESC NULLS LAST, c.course_code ASC
 """
-            params = {"student_no": student_no, "term": term}
+            params = {
+                "student_no": student_no,
+                "term": term,
+                "course_keyword": f"%{course_keyword}%" if course_keyword else None,
+                "course_code": f"%{course_code}%" if course_code else None,
+                "course_name": f"%{course_name}%" if course_name else None,
+            }
             if limit:
                 sql += " LIMIT :limit"
                 params["limit"] = limit
-            rows = db.execute(text(sql), params).mappings()
+            stmt = text(sql).bindparams(
+                bindparam("term", type_=String()),
+                bindparam("course_keyword", type_=String()),
+                bindparam("course_code", type_=String()),
+                bindparam("course_name", type_=String()),
+            )
+            rows = db.execute(stmt, params).mappings()
             return [dict(row) for row in rows]
 
         def _fetch_offering(offering: int) -> dict[str, Any] | None:
@@ -498,6 +729,49 @@ SELECT offering_id,
             ).mappings().first()
             return dict(row) if row else None
 
+        def _fetch_scores(limit: int | None = None) -> list[dict[str, Any]]:
+            sql = """
+SELECT s.offering_id,
+       s.total_score,
+       s.grade_text,
+       s.score_source,
+       t.term_name,
+       c.course_code,
+       c.course_name
+  FROM dm.student_scores s
+  JOIN dm.course_offerings o ON o.offering_id = s.offering_id
+  JOIN dm.courses c ON c.course_id = o.course_id
+  LEFT JOIN dm.academic_terms t ON t.term_id = o.term_id
+ WHERE s.student_no = :student_no
+   AND (:term IS NULL OR t.term_name = :term)
+   AND (:course_code IS NULL OR c.course_code ILIKE :course_code)
+   AND (:course_name IS NULL OR c.course_name ILIKE :course_name)
+   AND (
+       :course_keyword IS NULL
+       OR c.course_name ILIKE :course_keyword
+       OR c.course_code ILIKE :course_keyword
+   )
+ ORDER BY t.term_name DESC NULLS LAST, c.course_code ASC
+"""
+            params = {
+                "student_no": student_no,
+                "term": term,
+                "course_keyword": f"%{course_keyword}%" if course_keyword else None,
+                "course_code": f"%{course_code}%" if course_code else None,
+                "course_name": f"%{course_name}%" if course_name else None,
+            }
+            if limit:
+                sql += " LIMIT :limit"
+                params["limit"] = limit
+            stmt = text(sql).bindparams(
+                bindparam("term", type_=String()),
+                bindparam("course_keyword", type_=String()),
+                bindparam("course_code", type_=String()),
+                bindparam("course_name", type_=String()),
+            )
+            rows = db.execute(stmt, params).mappings()
+            return [dict(row) for row in rows]
+
         def _fetch_achievements(offering: int) -> list[dict[str, Any]]:
             sql = """
 SELECT objective_id,
@@ -538,7 +812,27 @@ SELECT offering_id,
                 "status": "ok",
                 "action": action,
                 "student_no": student_no,
-                "items": _fetch_offering_list(None),
+                "filters": {
+                    "term": term,
+                    "course_keyword": course_keyword,
+                    "course_code": course_code,
+                    "course_name": course_name,
+                },
+                "items": _fetch_offering_list(max_offerings),
+            }
+
+        if action == "list_scores":
+            return {
+                "status": "ok",
+                "action": action,
+                "student_no": student_no,
+                "filters": {
+                    "term": term,
+                    "course_keyword": course_keyword,
+                    "course_code": course_code,
+                    "course_name": course_name,
+                },
+                "items": _fetch_scores(max_offerings),
             }
 
         if action == "course_offering":
@@ -593,7 +887,7 @@ SELECT offering_id,
             }
 
         if action == "summary":
-            offerings = _fetch_offering_list(max_offerings)
+            offerings = _fetch_offering_list(summary_limit)
             items: list[dict[str, Any]] = []
             for offering in offerings:
                 current_id = offering.get("offering_id")

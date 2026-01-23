@@ -140,8 +140,63 @@ def init_tools_data():
             },
             'keywords': {
                 'type': 'string',
-                'description': '检索关键词（如赛事名、课程名）',
-                'required': True
+                'description': '检索关键词（如赛事名、课程名；课程类可留空）',
+                'required': False
+            },
+            'program_name': {
+                'type': 'string',
+                'description': '专业名称（如“自动化”）',
+                'required': False
+            },
+            'program_id': {
+                'type': 'integer',
+                'description': '专业ID（优先级高于 program_name）',
+                'required': False
+            },
+            'program_version_id': {
+                'type': 'integer',
+                'description': '培养方案版本ID（优先级最高）',
+                'required': False
+            },
+            'program_version_name': {
+                'type': 'string',
+                'description': '培养方案版本名称（如“2022版”）',
+                'required': False
+            },
+            'course_nature': {
+                'type': 'string',
+                'description': '课程性质（如“必修”“选修”）',
+                'required': False
+            },
+            'course_category': {
+                'type': 'string',
+                'description': '课程类别（如“专业课程”“学科基础课程”“通识教育课程”）',
+                'required': False
+            },
+            'planned_semester': {
+                'type': 'string',
+                'description': '建议开课学期（如“3-1”）',
+                'required': False
+            },
+            'course_code': {
+                'type': 'string',
+                'description': '课程代码（支持模糊匹配）',
+                'required': False
+            },
+            'course_name': {
+                'type': 'string',
+                'description': '课程名称（支持模糊匹配）',
+                'required': False
+            },
+            'limit': {
+                'type': 'integer',
+                'description': '返回条目上限（1-50）',
+                'required': False
+            },
+            'include_syllabus': {
+                'type': 'boolean',
+                'description': '是否附带课程大纲信息（默认 false）',
+                'required': False
             }
         }
         tool2_schema = build_json_schema(
@@ -217,6 +272,7 @@ def init_tools_data():
                 'description': '本地读库学业数据操作类型',
                 'enum': [
                     'list_course_offerings',
+                    'list_scores',
                     'course_offering',
                     'course_objectives',
                     'course_grades',
@@ -225,6 +281,11 @@ def init_tools_data():
                     'summary',
                 ],
                 'required': True
+            },
+            'user_id': {
+                'type': 'string',
+                'description': '用户唯一标识（系统自动注入，可忽略）',
+                'required': False
             },
             'offering_id': {
                 'type': 'integer',
@@ -236,6 +297,21 @@ def init_tools_data():
                 'description': '学期名称（可选，过滤课程清单）',
                 'required': False
             },
+            'course_keyword': {
+                'type': 'string',
+                'description': '课程名称/代码关键词（可选，用于筛选）',
+                'required': False
+            },
+            'course_code': {
+                'type': 'string',
+                'description': '课程代码（可选，支持模糊匹配）',
+                'required': False
+            },
+            'course_name': {
+                'type': 'string',
+                'description': '课程名称（可选，支持模糊匹配）',
+                'required': False
+            },
             'min_sample': {
                 'type': 'integer',
                 'description': '班级分布最小样本数（grade_distribution/summary可用）',
@@ -243,7 +319,7 @@ def init_tools_data():
             },
             'max_offerings': {
                 'type': 'integer',
-                'description': 'summary 模式下最多返回的课程数量',
+                'description': 'list/summary 模式下最多返回的课程数量',
                 'required': False
             },
             'include_grades': {

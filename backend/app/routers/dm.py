@@ -14,8 +14,11 @@ router = APIRouter(prefix="/api/dm", tags=["dm"])
 
 
 def _set_dm_context(db: Session, student_no: str) -> None:
-    db.execute(text("SET LOCAL app.student_no = :student_no"), {"student_no": student_no})
-    db.execute(text("SET LOCAL app.role = 'student'"))
+    db.execute(
+        text("SELECT set_config('app.student_no', :student_no, true)"),
+        {"student_no": student_no},
+    )
+    db.execute(text("SELECT set_config('app.role', 'student', true)"))
 
 
 @router.get("/me/sections")

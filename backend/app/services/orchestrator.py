@@ -99,7 +99,7 @@ def _build_tool_messages(
             {
                 "role": "tool",
                 "tool_call_id": tool_call_id,
-                "content": json.dumps(result.get("result", {}), ensure_ascii=False),
+                "content": json.dumps(result.get("result", {}), ensure_ascii=False, default=str),
             }
         )
     return assistant_message, tool_messages
