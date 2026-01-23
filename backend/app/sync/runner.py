@@ -19,11 +19,11 @@ SOURCE_NAME = "achieve"
 
 def _parse_term_window(term_window: str | None) -> list[str] | None:
     if not term_window:
-        return None
+        return []
     if isinstance(term_window, str):
         terms = [term.strip() for term in term_window.split(",") if term.strip()]
-        return terms or None
-    return None
+        return terms or []
+    return []
 
 
 def _get_watermark(conn, entity_name: str) -> datetime | None:
@@ -104,7 +104,7 @@ SELECT id AS student_id,
        class_name,
        updated_at
   FROM students
- WHERE (:updated_after IS NULL OR updated_at > :updated_after)
+ WHERE updated_at > COALESCE(:updated_after, 'epoch'::timestamptz)
 """
     rows = _fetch_rows(achieve_conn, sql, params)
     if not rows:
@@ -140,7 +140,7 @@ SELECT id AS program_id,
        name,
        updated_at
   FROM programs
- WHERE (:updated_after IS NULL OR updated_at > :updated_after)
+ WHERE updated_at > COALESCE(:updated_after, 'epoch'::timestamptz)
 """
     rows = _fetch_rows(achieve_conn, sql, params)
     if not rows:
@@ -172,7 +172,7 @@ SELECT id AS program_version_id,
        is_active,
        updated_at
   FROM training_program_versions
- WHERE (:updated_after IS NULL OR updated_at > :updated_after)
+ WHERE updated_at > COALESCE(:updated_after, 'epoch'::timestamptz)
 """
     rows = _fetch_rows(achieve_conn, sql, params)
     if not rows:
@@ -213,7 +213,7 @@ SELECT training_program_version_id AS program_version_id,
        display_order_secondary,
        updated_at
   FROM program_version_courses
- WHERE (:updated_after IS NULL OR updated_at > :updated_after)
+ WHERE updated_at > COALESCE(:updated_after, 'epoch'::timestamptz)
 """
     rows = _fetch_rows(achieve_conn, sql, params)
     if not rows:
@@ -258,7 +258,7 @@ SELECT id AS course_id,
        practice_hours,
        updated_at
   FROM courses
- WHERE (:updated_after IS NULL OR updated_at > :updated_after)
+ WHERE updated_at > COALESCE(:updated_after, 'epoch'::timestamptz)
 """
     rows = _fetch_rows(achieve_conn, sql, params)
     if not rows:
@@ -300,8 +300,8 @@ SELECT id AS term_id,
        term_index,
        updated_at
   FROM academic_terms
- WHERE (:updated_after IS NULL OR updated_at > :updated_after)
-   AND (:terms IS NULL OR name = ANY(:terms))
+ WHERE updated_at > COALESCE(:updated_after, 'epoch'::timestamptz)
+   AND (cardinality(CAST(:terms AS text[])) = 0 OR name = ANY(CAST(:terms AS text[])))
 """
     rows = _fetch_rows(achieve_conn, sql, params)
     if not rows:
@@ -349,8 +349,8 @@ SELECT o.id AS offering_id,
   FROM course_offerings o
   LEFT JOIN users u ON u.id = o.teacher_id
   JOIN academic_terms t ON t.id = o.term_id
- WHERE (:updated_after IS NULL OR o.updated_at > :updated_after)
-   AND (:terms IS NULL OR t.name = ANY(:terms))
+ WHERE o.updated_at > COALESCE(:updated_after, 'epoch'::timestamptz)
+   AND (cardinality(CAST(:terms AS text[])) = 0 OR t.name = ANY(CAST(:terms AS text[])))
 """
     rows = _fetch_rows(achieve_conn, sql, params)
     if not rows:
@@ -397,7 +397,7 @@ SELECT e.offering_id,
   JOIN students s ON s.id = e.student_id
   JOIN course_offerings o ON o.id = e.offering_id
   JOIN academic_terms t ON t.id = o.term_id
- WHERE (:terms IS NULL OR t.name = ANY(:terms))
+ WHERE (cardinality(CAST(:terms AS text[])) = 0 OR t.name = ANY(CAST(:terms AS text[])))
 """
     rows = _fetch_rows(achieve_conn, sql, {"terms": terms})
     if not rows:
@@ -441,7 +441,7 @@ WITH base AS (
       LEFT JOIN student_remarks r ON r.offering_id = e.offering_id AND r.student_id = e.student_id
       JOIN course_offerings o ON o.id = e.offering_id
       JOIN academic_terms t ON t.id = o.term_id
-     WHERE (:terms IS NULL OR t.name = ANY(:terms))
+     WHERE (cardinality(CAST(:terms AS text[])) = 0 OR t.name = ANY(CAST(:terms AS text[])))
 ),
 calc AS (
     SELECT student_id,
@@ -508,7 +508,7 @@ SELECT id AS syllabus_version_id,
        process_requirements,
        updated_at
   FROM syllabus_versions
- WHERE (:updated_after IS NULL OR updated_at > :updated_after)
+ WHERE updated_at > COALESCE(:updated_after, 'epoch'::timestamptz)
 """
     rows = _fetch_rows(achieve_conn, sql, params)
     if not rows:
@@ -555,7 +555,7 @@ SELECT co.id AS objective_id,
        sv.course_id
   FROM course_objectives co
   LEFT JOIN syllabus_versions sv ON sv.id = co.syllabus_version_id
- WHERE (:updated_after IS NULL OR co.updated_at > :updated_after)
+ WHERE co.updated_at > COALESCE(:updated_after, 'epoch'::timestamptz)
 """
     rows = _fetch_rows(achieve_conn, sql, params)
     if not rows:
@@ -606,8 +606,8 @@ SELECT oa.offering_id,
   JOIN students s ON s.id = oa.student_id
   JOIN course_offerings o ON o.id = oa.offering_id
   JOIN academic_terms t ON t.id = o.term_id
- WHERE (:updated_after IS NULL OR oa.updated_at > :updated_after)
-   AND (:terms IS NULL OR t.name = ANY(:terms))
+ WHERE oa.updated_at > COALESCE(:updated_after, 'epoch'::timestamptz)
+   AND (cardinality(CAST(:terms AS text[])) = 0 OR t.name = ANY(CAST(:terms AS text[])))
 """
     rows = _fetch_rows(achieve_conn, sql, params)
     if not rows:
@@ -659,7 +659,7 @@ SELECT o.offering_id,
   JOIN dm.course_offerings o ON o.offering_id = s.offering_id
   JOIN dm.academic_terms t ON t.term_id = o.term_id
  WHERE s.total_score IS NOT NULL
-   AND (:terms IS NULL OR t.term_name = ANY(:terms))
+   AND (cardinality(CAST(:terms AS text[])) = 0 OR t.term_name = ANY(CAST(:terms AS text[])))
  GROUP BY o.offering_id, o.term_id
 ON CONFLICT (offering_id) DO UPDATE
 SET n_students = EXCLUDED.n_students,
@@ -690,7 +690,7 @@ SELECT oa.offering_id,
   FROM dm.student_objective_achievements oa
   JOIN dm.course_offerings o ON o.offering_id = oa.offering_id
   JOIN dm.academic_terms t ON t.term_id = o.term_id
- WHERE (:terms IS NULL OR t.term_name = ANY(:terms))
+ WHERE (cardinality(CAST(:terms AS text[])) = 0 OR t.term_name = ANY(CAST(:terms AS text[])))
  GROUP BY oa.offering_id, oa.objective_id
 ON CONFLICT (offering_id, objective_id) DO UPDATE
 SET n_students = EXCLUDED.n_students,
@@ -712,7 +712,7 @@ def run_dm_sync(
     if not ACHIEVE_DB_DSN:
         raise RuntimeError("ACHIEVE_DB_DSN is not configured")
 
-    terms = term_window or _parse_term_window(SYNC_TERM_WINDOW)
+    terms = term_window if term_window is not None else _parse_term_window(SYNC_TERM_WINDOW)
     batch = batch_size or SYNC_BATCH_SIZE
 
     local_engine = create_engine(DATABASE_URL)
