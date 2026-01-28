@@ -280,6 +280,7 @@ class UserProfileOut(BaseModel):
 
 class UserCourseOut(BaseModel):
     offering_id: int
+    class_number: str | None = None
     course_code: str
     course_name: str
     teacher_name: str | None = None

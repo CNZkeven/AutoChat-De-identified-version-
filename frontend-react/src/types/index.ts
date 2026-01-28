@@ -135,6 +135,7 @@ export interface AdminUserProfiles {
 
 export interface UserCourse {
   offering_id: number;
+  class_number?: string | null;
   course_code: string;
   course_name: string;
   teacher_name?: string | null;

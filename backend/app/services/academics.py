@@ -21,12 +21,18 @@ def list_student_courses(db: Session, student_no: str, role: str = "student") ->
 WITH base AS (
     SELECT e.offering_id,
            o.teacher_name,
+           o.class_number,
            c.course_code,
-           c.course_name
+           c.course_name,
+           t.term_name,
+           t.start_year AS term_start_year,
+           t.term_index
       FROM dm.enrollments e
       JOIN dm.course_offerings o ON o.offering_id = e.offering_id
       JOIN dm.courses c ON c.course_id = o.course_id
+      LEFT JOIN dm.academic_terms t ON t.term_id = o.term_id
      WHERE e.student_no = :student_no
+       AND COALESCE(o.is_in_class_experiment, false) = false
 ),
 score_base AS (
     SELECT s.offering_id,
@@ -43,6 +49,7 @@ percentiles AS (
      WHERE total_score IS NOT NULL
 )
 SELECT b.offering_id,
+       b.class_number,
        b.course_code,
        b.course_name,
        b.teacher_name,
@@ -52,7 +59,10 @@ SELECT b.offering_id,
   FROM base b
   LEFT JOIN score_base s ON s.offering_id = b.offering_id
   LEFT JOIN percentiles p ON p.offering_id = b.offering_id AND p.student_no = :student_no
- ORDER BY b.course_code ASC
+ ORDER BY b.term_start_year DESC NULLS LAST,
+          b.term_index DESC NULLS LAST,
+          b.class_number ASC NULLS LAST,
+          b.course_code ASC
 """
     rows = db.execute(text(sql), {"student_no": student_no}).mappings().all()
     return [dict(row) for row in rows]

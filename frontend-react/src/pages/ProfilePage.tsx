@@ -173,7 +173,7 @@ export function ProfilePage() {
                 <table className="min-w-full text-sm">
                   <thead className="text-slate-300">
                     <tr>
-                      <th className="px-3 py-2 text-left">课程号</th>
+                      <th className="px-3 py-2 text-left">教学班号</th>
                       <th className="px-3 py-2 text-left">课程名称</th>
                       <th className="px-3 py-2 text-left">任课教师</th>
                       <th className="px-3 py-2 text-left">成绩</th>
@@ -191,7 +191,7 @@ export function ProfilePage() {
                     ) : (
                       courses.map((course) => (
                         <tr key={course.offering_id} className="border-t border-white/5">
-                          <td className="px-3 py-2">{course.course_code}</td>
+                          <td className="px-3 py-2">{course.class_number || course.course_code}</td>
                           <td className="px-3 py-2">{course.course_name}</td>
                           <td className="px-3 py-2">{course.teacher_name || '-'}</td>
                           <td className="px-3 py-2">

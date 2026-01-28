@@ -662,7 +662,11 @@ SELECT e.offering_id,
        OR c.course_name ILIKE :course_keyword
        OR c.course_code ILIKE :course_keyword
    )
- ORDER BY t.term_name DESC NULLS LAST, c.course_code ASC
+   AND COALESCE(o.is_in_class_experiment, false) = false
+ ORDER BY t.start_year DESC NULLS LAST,
+          t.term_index DESC NULLS LAST,
+          o.class_number ASC NULLS LAST,
+          c.course_code ASC
 """
             params = {
                 "student_no": student_no,
@@ -732,6 +736,7 @@ SELECT offering_id,
         def _fetch_scores(limit: int | None = None) -> list[dict[str, Any]]:
             sql = """
 SELECT s.offering_id,
+       o.class_number,
        s.total_score,
        s.grade_text,
        s.score_source,
@@ -751,7 +756,11 @@ SELECT s.offering_id,
        OR c.course_name ILIKE :course_keyword
        OR c.course_code ILIKE :course_keyword
    )
- ORDER BY t.term_name DESC NULLS LAST, c.course_code ASC
+   AND COALESCE(o.is_in_class_experiment, false) = false
+ ORDER BY t.start_year DESC NULLS LAST,
+          t.term_index DESC NULLS LAST,
+          o.class_number ASC NULLS LAST,
+          c.course_code ASC
 """
             params = {
                 "student_no": student_no,
@@ -807,6 +816,24 @@ SELECT offering_id,
                 payload["note"] = "insufficient_sample"
             return payload
 
+        def _is_in_class_experiment(offering: int) -> bool:
+            row = db.execute(
+                text(
+                    """
+SELECT COALESCE(is_in_class_experiment, false) AS flag
+  FROM dm.course_offerings
+ WHERE offering_id = :offering_id
+"""
+                ),
+                {"offering_id": offering},
+            ).mappings().first()
+            return bool(row["flag"]) if row else False
+
+        def _guard_offering(offering: int) -> dict[str, Any] | None:
+            if _is_in_class_experiment(offering):
+                return {"status": "error", "message": "in_class_experiment_filtered", "offering_id": offering}
+            return None
+
         if action == "list_course_offerings":
             return {
                 "status": "ok",
@@ -838,6 +865,9 @@ SELECT offering_id,
         if action == "course_offering":
             if offering_id is None:
                 return {"status": "error", "message": "missing offering_id"}
+            blocked = _guard_offering(offering_id)
+            if blocked:
+                return blocked
             return {
                 "status": "ok",
                 "action": action,
@@ -848,6 +878,9 @@ SELECT offering_id,
         if action == "course_objectives":
             if offering_id is None:
                 return {"status": "error", "message": "missing offering_id"}
+            blocked = _guard_offering(offering_id)
+            if blocked:
+                return blocked
             return {
                 "status": "ok",
                 "action": action,
@@ -858,6 +891,9 @@ SELECT offering_id,
         if action == "course_grades":
             if offering_id is None:
                 return {"status": "error", "message": "missing offering_id"}
+            blocked = _guard_offering(offering_id)
+            if blocked:
+                return blocked
             return {
                 "status": "ok",
                 "action": action,
@@ -868,6 +904,9 @@ SELECT offering_id,
         if action == "course_achievements":
             if offering_id is None:
                 return {"status": "error", "message": "missing offering_id"}
+            blocked = _guard_offering(offering_id)
+            if blocked:
+                return blocked
             return {
                 "status": "ok",
                 "action": action,
@@ -878,6 +917,9 @@ SELECT offering_id,
         if action == "grade_distribution":
             if offering_id is None:
                 return {"status": "error", "message": "missing offering_id"}
+            blocked = _guard_offering(offering_id)
+            if blocked:
+                return blocked
             return {
                 "status": "ok",
                 "action": action,
