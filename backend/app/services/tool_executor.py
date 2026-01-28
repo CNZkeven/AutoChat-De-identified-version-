@@ -705,17 +705,148 @@ SELECT o.offering_id,
             row = db.execute(text(sql), {"offering_id": offering}).mappings().first()
             return dict(row) if row else None
 
+        def _extract_year(value: str | None) -> int | None:
+            if not value:
+                return None
+            match = re.search(r"(20\\d{2})", value)
+            return int(match.group(1)) if match else None
+
+        def _resolve_program_version_id() -> int | None:
+            student_row = db.execute(
+                text(
+                    """
+SELECT program_id, grade_year
+  FROM dm.students
+ WHERE student_no = :student_no
+"""
+                ),
+                {"student_no": student_no},
+            ).mappings().first()
+            if not student_row:
+                return None
+            grade_year = student_row.get("grade_year")
+            if grade_year is None:
+                return None
+            versions = db.execute(
+                text(
+                    """
+SELECT program_version_id, version_name, is_active
+  FROM dm.program_versions
+ WHERE program_id = :program_id
+"""
+                ),
+                {"program_id": student_row["program_id"]},
+            ).mappings().all()
+            candidates: list[tuple[int, int, bool]] = []
+            for row in versions:
+                year = _extract_year(row.get("version_name"))
+                if year is not None:
+                    candidates.append((year, row["program_version_id"], bool(row.get("is_active"))))
+            eligible = [item for item in candidates if item[0] <= grade_year]
+            if eligible:
+                eligible.sort(key=lambda item: item[0], reverse=True)
+                return eligible[0][1]
+            active = [item for item in candidates if item[2]]
+            if active:
+                active.sort(key=lambda item: item[0], reverse=True)
+                return active[0][1]
+            if candidates:
+                candidates.sort(key=lambda item: item[0], reverse=True)
+                return candidates[0][1]
+            return None
+
+        def _resolve_syllabus_version_id(course_id: int, selected_syllabus_version_id: int | None) -> int | None:
+            if selected_syllabus_version_id is not None:
+                return selected_syllabus_version_id
+            program_version_id = _resolve_program_version_id()
+            if program_version_id is not None:
+                row = db.execute(
+                    text(
+                        """
+SELECT sv.syllabus_version_id
+  FROM dm.syllabus_versions sv
+  JOIN dm.syllabus_version_programs svp
+    ON svp.syllabus_version_id = sv.syllabus_version_id
+ WHERE sv.course_id = :course_id
+   AND svp.training_program_version_id = :program_version_id
+ ORDER BY sv.is_default DESC,
+          sv.updated_at DESC NULLS LAST,
+          sv.syllabus_version_id DESC
+ LIMIT 1
+"""
+                    ),
+                    {"course_id": course_id, "program_version_id": program_version_id},
+                ).mappings().first()
+                if row:
+                    return row["syllabus_version_id"]
+            row = db.execute(
+                text(
+                    """
+SELECT syllabus_version_id
+  FROM dm.syllabus_versions
+ WHERE course_id = :course_id
+ ORDER BY is_default DESC,
+          updated_at DESC NULLS LAST,
+          syllabus_version_id DESC
+ LIMIT 1
+"""
+                ),
+                {"course_id": course_id},
+            ).mappings().first()
+            return row["syllabus_version_id"] if row else None
+
         def _fetch_objectives(offering: int) -> list[dict[str, Any]]:
+            offering_row = db.execute(
+                text(
+                    """
+SELECT course_id, selected_syllabus_version_id
+  FROM dm.course_offerings
+ WHERE offering_id = :offering_id
+"""
+                ),
+                {"offering_id": offering},
+            ).mappings().first()
+            if not offering_row:
+                return []
+            course_id = offering_row["course_id"]
+            selected_syllabus_version_id = offering_row["selected_syllabus_version_id"]
+            has_offering_objectives = db.execute(
+                text(
+                    "SELECT 1 FROM dm.course_objectives WHERE offering_id = :offering_id LIMIT 1"
+                ),
+                {"offering_id": offering},
+            ).first()
+            target_syllabus_version_id = None if has_offering_objectives else _resolve_syllabus_version_id(
+                course_id, selected_syllabus_version_id
+            )
+            if has_offering_objectives and selected_syllabus_version_id is not None:
+                objective_filter = (
+                    "offering_id = :offering_id AND "
+                    "(syllabus_version_id IS NULL OR syllabus_version_id = :syllabus_version_id)"
+                )
+            elif has_offering_objectives:
+                objective_filter = "offering_id = :offering_id"
+            elif target_syllabus_version_id is not None:
+                objective_filter = "course_id = :course_id AND syllabus_version_id = :syllabus_version_id"
+            else:
+                objective_filter = "course_id = :course_id"
             sql = """
 SELECT objective_id,
        objective_index,
        description,
        objective_type
   FROM dm.course_objectives
- WHERE offering_id = :offering_id
- ORDER BY objective_id ASC
+ WHERE {objective_filter}
+ ORDER BY objective_index NULLS LAST, objective_id ASC
 """
-            rows = db.execute(text(sql), {"offering_id": offering}).mappings()
+            rows = db.execute(
+                text(sql.format(objective_filter=objective_filter)),
+                {
+                    "offering_id": offering,
+                    "course_id": course_id,
+                    "syllabus_version_id": target_syllabus_version_id or selected_syllabus_version_id,
+                },
+            ).mappings()
             return [dict(row) for row in rows]
 
         def _fetch_grade(offering: int) -> dict[str, Any] | None:
