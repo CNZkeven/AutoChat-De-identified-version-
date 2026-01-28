@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ChangeEvent } from 'react';
 import { Layout } from '../components/layout/Layout';
 import { adminService } from '../services/admin';
 import { getAgentConfig } from '../utils/constants';
@@ -8,6 +9,7 @@ import type {
   AdminRunDetail,
   AdminRunSummary,
   AdminUser,
+  AdminUserProfiles,
 } from '../types';
 
 type AdminTab = 'users' | 'agents';
@@ -29,6 +31,26 @@ export function AdminPage() {
   const [debugInput, setDebugInput] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  const [userSearchInput, setUserSearchInput] = useState('');
+  const [userFilters, setUserFilters] = useState<{ major: string; grade: string; gender: string }>({
+    major: '',
+    grade: '',
+    gender: '',
+  });
+  const [filterOptions, setFilterOptions] = useState<{ majors: string[]; grades: number[]; genders: string[] }>({
+    majors: [],
+    grades: [],
+    genders: [],
+  });
+  const [userModalOpen, setUserModalOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
+  const [userProfiles, setUserProfiles] = useState<AdminUserProfiles | null>(null);
+  const [userEdit, setUserEdit] = useState<Partial<AdminUser>>({});
+  const [userStatusMessage, setUserStatusMessage] = useState('');
+  const [importResult, setImportResult] = useState<string>('');
+  const [userModalTab, setUserModalTab] = useState<'base' | 'profile'>('base');
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) || null,
@@ -55,12 +77,14 @@ export function AdminPage() {
     const init = async () => {
       setIsLoading(true);
       try {
-        const [agentData, userData] = await Promise.all([
+        const [agentData, userData, filters] = await Promise.all([
           adminService.listAgents(),
           adminService.listUsers(),
+          adminService.listUserFilters(),
         ]);
         setAgents(agentData);
         setUsers(userData);
+        setFilterOptions(filters);
         const demo = userData.find((user) => user.username === 'demo');
         setSelectedUserId(demo?.id ?? userData[0]?.id ?? null);
         setSelectedAgentId(agentData[0]?.id ?? null);
@@ -131,15 +155,121 @@ export function AdminPage() {
       .catch((error) => setStatusMessage(error instanceof Error ? error.message : '加载失败'));
   }, [selectedTraceId]);
 
+  useEffect(() => {
+    if (activeTab !== 'users') return;
+    loadManagedUsers();
+    adminService.listUserFilters().then(setFilterOptions).catch(() => undefined);
+  }, [activeTab]);
+
   const handleSearchUsers = async (value: string) => {
     setUserSearch(value);
     try {
-      const data = await adminService.listUsers(value);
+      const data = await adminService.listUsers({ q: value });
       setUsers(data);
       const demo = data.find((user) => user.username === 'demo');
       setSelectedUserId(demo?.id ?? data[0]?.id ?? null);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : '加载失败');
+    }
+  };
+
+  const loadManagedUsers = async (params?: { q?: string; major?: string; grade?: number; gender?: string }) => {
+    try {
+      const data = await adminService.listUsers(params);
+      setUsers(data);
+    } catch (error) {
+      setUserStatusMessage(error instanceof Error ? error.message : '加载失败');
+    }
+  };
+
+  const handleUserSearch = async () => {
+    setUserStatusMessage('加载中...');
+    await loadManagedUsers({
+      q: userSearchInput || undefined,
+      major: userFilters.major || undefined,
+      grade: userFilters.grade ? Number(userFilters.grade) : undefined,
+      gender: userFilters.gender || undefined,
+    });
+    setUserStatusMessage('');
+  };
+
+  const handleOpenUserModal = async (user: AdminUser) => {
+    setSelectedUser(user);
+    setUserEdit(user);
+    setUserModalOpen(true);
+    setUserModalTab('base');
+    try {
+      const profiles = await adminService.getUserProfiles(user.id);
+      setUserProfiles(profiles);
+    } catch {
+      setUserProfiles(null);
+    }
+  };
+
+  const handleSaveUser = async () => {
+    if (!selectedUser) return;
+    setUserStatusMessage('保存中...');
+    try {
+      const updated = await adminService.updateUser(selectedUser.id, {
+        email: userEdit.email ?? null,
+        full_name: userEdit.full_name ?? null,
+        major: userEdit.major ?? null,
+        grade: userEdit.grade ?? null,
+        gender: userEdit.gender ?? null,
+        is_active: userEdit.is_active ?? null,
+      });
+      setSelectedUser(updated);
+      setUsers((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      setUserStatusMessage('保存完成');
+    } catch (error) {
+      setUserStatusMessage(error instanceof Error ? error.message : '保存失败');
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!selectedUser) return;
+    setUserStatusMessage('重置密码中...');
+    try {
+      await adminService.resetUserPassword(selectedUser.id);
+      setUserStatusMessage('已重置为学号');
+    } catch (error) {
+      setUserStatusMessage(error instanceof Error ? error.message : '重置失败');
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const blob = await adminService.downloadImportTemplate();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = '用户导入模板.xlsx';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      setUserStatusMessage(error instanceof Error ? error.message : '下载失败');
+    }
+  };
+
+  const handleImportClick = () => {
+    importInputRef.current?.click();
+  };
+
+  const handleImportFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setUserStatusMessage('导入中...');
+    try {
+      const result = await adminService.importUsers(file);
+      setImportResult(`导入完成：新增 ${result.created}，更新 ${result.updated}`);
+      await loadManagedUsers();
+      setUserStatusMessage('');
+    } catch (error) {
+      setUserStatusMessage(error instanceof Error ? error.message : '导入失败');
+    } finally {
+      event.target.value = '';
     }
   };
 
@@ -210,16 +340,304 @@ export function AdminPage() {
           </div>
 
           {activeTab === 'users' ? (
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold">用户管理</h2>
-                <span className="text-xs px-2 py-1 rounded-full bg-slate-800 text-slate-300">
-                  占位
-                </span>
+            <div className="space-y-6">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-lg font-semibold">用户管理</h2>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="px-3 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700"
+                      onClick={handleDownloadTemplate}
+                    >
+                      下载模板
+                    </button>
+                    <button
+                      type="button"
+                      className="px-3 py-2 rounded-lg bg-blue-500/20 text-blue-100 hover:bg-blue-500/30"
+                      onClick={handleImportClick}
+                    >
+                      批量导入
+                    </button>
+                    <input
+                      ref={importInputRef}
+                      type="file"
+                      accept=".xlsx"
+                      className="hidden"
+                      onChange={handleImportFileChange}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <input
+                    type="text"
+                    value={userSearchInput}
+                    onChange={(event) => setUserSearchInput(event.target.value)}
+                    className="rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-white"
+                    placeholder="搜索学号或姓名"
+                  />
+                  <select
+                    className="rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-white"
+                    value={userFilters.major}
+                    onChange={(event) => setUserFilters((prev) => ({ ...prev, major: event.target.value }))}
+                  >
+                    <option value="">全部专业</option>
+                    {filterOptions.majors.map((major) => (
+                      <option key={major} value={major}>
+                        {major}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-white"
+                    value={userFilters.grade}
+                    onChange={(event) => setUserFilters((prev) => ({ ...prev, grade: event.target.value }))}
+                  >
+                    <option value="">全部年级</option>
+                    {filterOptions.grades.map((grade) => (
+                      <option key={grade} value={String(grade)}>
+                        {grade}级
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-white"
+                    value={userFilters.gender}
+                    onChange={(event) => setUserFilters((prev) => ({ ...prev, gender: event.target.value }))}
+                  >
+                    <option value="">全部性别</option>
+                    {filterOptions.genders.map((gender) => (
+                      <option key={gender} value={gender}>
+                        {gender}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    className="px-3 py-2 rounded-lg bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
+                    onClick={handleUserSearch}
+                  >
+                    搜索
+                  </button>
+                  <button
+                    type="button"
+                    className="px-3 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700"
+                    onClick={() => {
+                      setUserSearchInput('');
+                      setUserFilters({ major: '', grade: '', gender: '' });
+                      loadManagedUsers();
+                    }}
+                  >
+                    重置
+                  </button>
+                  {userStatusMessage && <span className="text-xs text-slate-400">{userStatusMessage}</span>}
+                  {importResult && <span className="text-xs text-emerald-300">{importResult}</span>}
+                </div>
               </div>
-              <p className="text-sm text-slate-300">
-                用户管理模块建设中，用于后续权限、状态与批量操作管理。
-              </p>
+
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="text-slate-300">
+                      <tr>
+                        <th className="px-3 py-2 text-left">学号</th>
+                        <th className="px-3 py-2 text-left">姓名</th>
+                        <th className="px-3 py-2 text-left">专业</th>
+                        <th className="px-3 py-2 text-left">年级</th>
+                        <th className="px-3 py-2 text-left">性别</th>
+                        <th className="px-3 py-2 text-left">邮箱</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-slate-200">
+                      {users.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-3 py-4 text-slate-400">
+                            暂无用户数据
+                          </td>
+                        </tr>
+                      ) : (
+                        users.map((user) => (
+                          <tr
+                            key={user.id}
+                            className="border-t border-white/5 hover:bg-white/5 cursor-pointer"
+                            onClick={() => handleOpenUserModal(user)}
+                          >
+                            <td className="px-3 py-2">{user.username}</td>
+                            <td className="px-3 py-2">{user.full_name || '-'}</td>
+                            <td className="px-3 py-2">{user.major || '-'}</td>
+                            <td className="px-3 py-2">{user.grade ? `${user.grade}级` : '-'}</td>
+                            <td className="px-3 py-2">{user.gender || '-'}</td>
+                            <td className="px-3 py-2">{user.email || '-'}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {userModalOpen && selectedUser && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+                  <div className="w-full max-w-3xl rounded-2xl border border-white/10 bg-slate-900 p-6 text-slate-100">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-lg font-semibold">用户详情</h3>
+                      <button
+                        type="button"
+                        className="text-slate-400 hover:text-slate-200"
+                        onClick={() => setUserModalOpen(false)}
+                      >
+                        关闭
+                      </button>
+                    </div>
+
+                    <div className="flex gap-3 mt-4">
+                      <button
+                        type="button"
+                        className={`px-3 py-1.5 rounded-full text-xs ${
+                          userModalTab === 'base'
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-white/10 text-slate-200 hover:bg-white/20'
+                        }`}
+                        onClick={() => setUserModalTab('base')}
+                      >
+                        基本信息
+                      </button>
+                      <button
+                        type="button"
+                        className={`px-3 py-1.5 rounded-full text-xs ${
+                          userModalTab === 'profile'
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-white/10 text-slate-200 hover:bg-white/20'
+                        }`}
+                        onClick={() => setUserModalTab('profile')}
+                      >
+                        用户画像
+                      </button>
+                    </div>
+
+                    {userModalTab === 'base' ? (
+                      <div className="mt-4 space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                          <label className="flex flex-col gap-1">
+                            <span className="text-xs text-slate-400">学号</span>
+                            <input
+                              value={selectedUser.username}
+                              readOnly
+                              className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-200"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-xs text-slate-400">姓名</span>
+                            <input
+                              value={userEdit.full_name ?? ''}
+                              onChange={(event) =>
+                                setUserEdit((prev) => ({ ...prev, full_name: event.target.value }))
+                              }
+                              className="rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-white"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-xs text-slate-400">专业</span>
+                            <input
+                              value={userEdit.major ?? ''}
+                              onChange={(event) =>
+                                setUserEdit((prev) => ({ ...prev, major: event.target.value }))
+                              }
+                              className="rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-white"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-xs text-slate-400">年级</span>
+                            <input
+                              value={userEdit.grade ?? ''}
+                              onChange={(event) =>
+                                setUserEdit((prev) => ({
+                                  ...prev,
+                                  grade: event.target.value ? Number(event.target.value) : null,
+                                }))
+                              }
+                              className="rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-white"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-xs text-slate-400">性别</span>
+                            <select
+                              value={userEdit.gender ?? ''}
+                              onChange={(event) =>
+                                setUserEdit((prev) => ({ ...prev, gender: event.target.value }))
+                              }
+                              className="rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-white"
+                            >
+                              <option value="">未设置</option>
+                              <option value="男">男</option>
+                              <option value="女">女</option>
+                              <option value="未知">未知</option>
+                            </select>
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-xs text-slate-400">邮箱</span>
+                            <input
+                              value={userEdit.email ?? ''}
+                              onChange={(event) =>
+                                setUserEdit((prev) => ({ ...prev, email: event.target.value }))
+                              }
+                              className="rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-white"
+                            />
+                          </label>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3">
+                          <button
+                            type="button"
+                            className="px-3 py-2 rounded-lg bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
+                            onClick={handleSaveUser}
+                          >
+                            保存
+                          </button>
+                          <button
+                            type="button"
+                            className="px-3 py-2 rounded-lg bg-amber-500/20 text-amber-100 hover:bg-amber-500/30"
+                            onClick={handleResetPassword}
+                          >
+                            重置密码为学号
+                          </button>
+                          {userStatusMessage && (
+                            <span className="text-xs text-slate-400">{userStatusMessage}</span>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-4 space-y-4 text-sm">
+                        <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                          <div className="text-xs text-slate-400 mb-2">系统画像（仅管理员可见）</div>
+                          <div className="whitespace-pre-wrap text-slate-200">
+                            {userProfiles?.system_profile || '暂无系统画像'}
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                          <div className="text-xs text-slate-400 mb-2">用户画像</div>
+                          <div className="whitespace-pre-wrap text-slate-200">
+                            {userProfiles?.public_profile || '暂无用户画像'}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="px-3 py-2 rounded-lg bg-blue-500/20 text-blue-100 hover:bg-blue-500/30"
+                          onClick={() =>
+                            window.open(`/admin/users/${selectedUser.id}/academics`, '_blank')
+                          }
+                        >
+                          查看学业情况
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-1 xl:grid-cols-[260px_320px_1fr] gap-6">

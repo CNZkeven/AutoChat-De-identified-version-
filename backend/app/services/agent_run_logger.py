@@ -1,4 +1,5 @@
 import re
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -18,6 +19,16 @@ def _sanitize_text(text: str | None) -> str | None:
     return text
 
 
+def _normalize_json(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {key: _normalize_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_json(item) for item in value]
+    return value
+
+
 def write_agent_run(db: Session, payload: dict[str, Any]) -> int | None:
     record = AgentRun(
         agent=payload.get("agent"),
@@ -26,11 +37,11 @@ def write_agent_run(db: Session, payload: dict[str, Any]) -> int | None:
         profile_id=payload.get("profile_id"),
         profile_version=payload.get("profile_version"),
         request_text=_sanitize_text(payload.get("request_text")),
-        plan_json=payload.get("plan_json"),
-        tool_summary=payload.get("tool_summary"),
+        plan_json=_normalize_json(payload.get("plan_json")),
+        tool_summary=_normalize_json(payload.get("tool_summary")),
         final_answer=payload.get("final_answer"),
         latency_ms=payload.get("latency_ms"),
-        cost=payload.get("cost"),
+        cost=_normalize_json(payload.get("cost")),
     )
     db.add(record)
     db.commit()
@@ -55,7 +66,7 @@ def write_agent_run_trace(db: Session, payload: dict[str, Any]) -> int | None:
         conversation_id=payload.get("conversation_id"),
         user_message_id=payload.get("user_message_id"),
         request_text=_sanitize_text(payload.get("request_text")),
-        trace=payload.get("trace") or [],
+        trace=_normalize_json(payload.get("trace") or []),
     )
     db.add(record)
     db.commit()

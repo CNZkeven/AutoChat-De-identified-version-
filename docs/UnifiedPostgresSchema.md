@@ -2,7 +2,7 @@
 
 ## 设计原则
 - 兼容现有 API（/api/conversations 与 /api/agents/{agent}/chat）。
-- 以当前项目的对话/记忆表为主干，新增 database/ 的业务表。
+- 以当前项目的对话/记忆表为主干，新增知识库/课程/工具等业务表。
 - 使用 PostgreSQL 原生类型（JSONB、TIMESTAMPTZ）。
 
 ## 核心表（对话/用户）

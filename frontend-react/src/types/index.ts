@@ -25,10 +25,14 @@ export interface AgentConfig {
 export interface User {
   id: number;
   username: string;
+  email?: string | null;
+  full_name?: string | null;
+  major?: string | null;
+  grade?: number | null;
+  gender?: string | null;
 }
 
 export interface AdminUser extends User {
-  email?: string | null;
   is_active?: boolean | null;
 }
 
@@ -119,6 +123,54 @@ export interface AdminAgent {
 export interface AdminUserProfile {
   user_id: number;
   data: Record<string, unknown>;
+}
+
+export interface AdminUserProfiles {
+  user_id: number;
+  system_profile?: string | null;
+  public_profile?: string | null;
+  system_updated_at?: string | null;
+  public_updated_at?: string | null;
+}
+
+export interface UserCourse {
+  offering_id: number;
+  course_code: string;
+  course_name: string;
+  teacher_name?: string | null;
+  total_score?: number | null;
+  grade_text?: string | null;
+  percentile?: number | null;
+}
+
+export interface UserCourseObjective {
+  objective_id: number;
+  objective_index?: string | null;
+  description: string;
+  achievement_score?: number | null;
+  total_score?: number | null;
+  max_score?: number | null;
+  percentile?: number | null;
+}
+
+export interface UserCourseReport {
+  content?: string | null;
+  updated_at?: string | null;
+}
+
+export interface UserProfile {
+  content?: string | null;
+  updated_at?: string | null;
+}
+
+export interface UserGraduationRequirement {
+  data: Record<string, unknown>;
+  updated_at?: string | null;
+}
+
+export interface UserAcademicReport {
+  content?: string | null;
+  updated_at?: string | null;
 }
 
 export interface AdminRunSummary {

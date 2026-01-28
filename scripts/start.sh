@@ -19,6 +19,21 @@ log_error() {
     echo "[start][error] $*" >&2
 }
 
+clean_logs() {
+    log_info "清理日志文件..."
+    shopt -s nullglob
+    for file in "$LOG_DIR"/*; do
+        if [ -f "$file" ]; then
+            case "$file" in
+                *.log|*.pid)
+                    : > "$file"
+                    ;;
+            esac
+        fi
+    done
+    shopt -u nullglob
+}
+
 compose() {
     (cd "$ROOT_DIR" && docker compose "$@")
 }
@@ -45,6 +60,36 @@ is_port_available() {
     if [ "$status" -eq 2 ]; then
         log_warn "无法检查端口 $port（缺少 lsof/nc），尝试继续使用。"
     fi
+    return 0
+}
+
+cleanup_port() {
+    local port="$1"
+    if ! command -v lsof >/dev/null 2>&1; then
+        log_error "端口 $port 被占用，但无法自动清理（缺少 lsof）。"
+        return 1
+    fi
+
+    local pids
+    pids=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t || true)
+    if [ -z "$pids" ]; then
+        return 0
+    fi
+
+    log_warn "端口 $port 被占用，尝试清理进程: $pids"
+    kill $pids >/dev/null 2>&1 || true
+    sleep 1
+    if check_port_listening "$port"; then
+        log_warn "端口 $port 仍被占用，尝试强制清理。"
+        kill -9 $pids >/dev/null 2>&1 || true
+        sleep 1
+    fi
+
+    if check_port_listening "$port"; then
+        log_error "端口 $port 仍被占用，请手动释放后重试。"
+        return 1
+    fi
+
     return 0
 }
 
@@ -113,6 +158,8 @@ if ! docker compose version >/dev/null 2>&1; then
 fi
 
 mkdir -p "$LOG_DIR"
+log_info "初始化启动脚本..."
+clean_logs
 
 if [ ! -f "$ENV_FILE" ]; then
     cp "$EXAMPLE_FILE" "$ENV_FILE"
@@ -131,18 +178,15 @@ fi
 
 DEFAULT_POSTGRES_PORT="${POSTGRES_PORT:-5433}"
 DEFAULT_BACKEND_PORT="${BACKEND_PORT:-8000}"
-DEFAULT_FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+FIXED_FRONTEND_PORT=5174
 POSTGRES_PORT_MIN=5433
 POSTGRES_PORT_MAX=5499
 BACKEND_PORT_MIN=8000
 BACKEND_PORT_MAX=8099
-FRONTEND_PORT_MIN=5173
-FRONTEND_PORT_MAX=5199
 
 if compose ps --services --status running 2>/dev/null | grep -qx "db"; then
     POSTGRES_PORT="$(get_compose_port db 5432)"
     BACKEND_PORT="$(get_compose_port backend 8000)"
-    FRONTEND_PORT="$(get_compose_port frontend 5173)"
 fi
 
 if [ -n "${POSTGRES_PORT:-}" ] && ! is_port_available "$POSTGRES_PORT"; then
@@ -181,23 +225,7 @@ if [ -z "${BACKEND_PORT:-}" ]; then
     fi
 fi
 
-if [ -n "${FRONTEND_PORT:-}" ] && ! is_port_available "$FRONTEND_PORT"; then
-    log_warn "端口 $FRONTEND_PORT 已被占用，尝试在 ${FRONTEND_PORT_MIN}-${FRONTEND_PORT_MAX} 内选择可用端口。"
-    FRONTEND_PORT=""
-fi
-
-if [ -z "${FRONTEND_PORT:-}" ]; then
-    candidates=()
-    add_candidate "${LAST_FRONTEND_PORT:-}" candidates
-    add_candidate "$DEFAULT_FRONTEND_PORT" candidates
-    FRONTEND_PORT="$(find_available_port "${candidates[@]}")" || FRONTEND_PORT=""
-    if [ -z "$FRONTEND_PORT" ]; then
-        FRONTEND_PORT="$(find_available_port_in_range "$FRONTEND_PORT_MIN" "$FRONTEND_PORT_MAX")" || {
-            log_error "未找到可用的前端端口（${FRONTEND_PORT_MIN}-${FRONTEND_PORT_MAX}）。"
-            exit 1
-        }
-    fi
-fi
+FRONTEND_PORT="$FIXED_FRONTEND_PORT"
 
 if check_port_listening "$POSTGRES_PORT" && ! (compose ps --services --status running 2>/dev/null | grep -qx "db"); then
     log_error "端口 $POSTGRES_PORT 已被非本项目进程占用，请更换端口或释放后重试。"
@@ -210,8 +238,7 @@ if check_port_listening "$BACKEND_PORT" && ! (compose ps --services --status run
 fi
 
 if check_port_listening "$FRONTEND_PORT" && ! (compose ps --services --status running 2>/dev/null | grep -qx "frontend"); then
-    log_error "端口 $FRONTEND_PORT 已被非本项目进程占用，请更换端口或释放后重试。"
-    exit 1
+    cleanup_port "$FRONTEND_PORT" || exit 1
 fi
 
 export POSTGRES_PORT

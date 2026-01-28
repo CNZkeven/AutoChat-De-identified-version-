@@ -2,6 +2,7 @@
 .pgdata/
 .DS_Store
 .serena/
+.worktrees/
 __pycache__/
 *.pyc
 node_modules/
@@ -18,4 +19,3 @@ backend/.env
 .env.*
 !.env.example
 .codex
-database

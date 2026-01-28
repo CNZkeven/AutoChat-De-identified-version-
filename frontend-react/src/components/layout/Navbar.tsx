@@ -66,12 +66,15 @@ export function Navbar({ title, agentColor }: NavbarProps) {
             {isAuthenticated ? (
               <>
                 {/* User info */}
-                <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg">
+                <Link
+                  to="/profile"
+                  className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                >
                   <User size={16} className="text-gray-500" />
                   <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    {user?.username}
+                    {user?.full_name || user?.username}
                   </span>
-                </div>
+                </Link>
 
                 {user?.username === 'admin' && (
                   <Link

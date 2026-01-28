@@ -34,6 +34,7 @@ from ..services.orchestrator import (
 from ..services.title import generate_conversation_title
 from ..services.tool_logging import write_agent_log
 from ..services.tool_registry import load_tool_registry
+from ..services.user_profiles import fetch_system_profile
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,7 @@ def _build_selected_hint(messages: list[dict], selected_messages: list[dict]) ->
 def _attach_memory_prompt(
     messages: list[dict],
     memory_summary: str | None,
+    system_profile: str | None,
     agent_title: str,
     agent: str,
     user_id: int | None,
@@ -125,6 +127,8 @@ def _attach_memory_prompt(
         system_parts = [f"你是{agent_title}。"]
     if memory_summary:
         system_parts.append("用户记忆摘要：\n" + memory_summary)
+    if system_profile:
+        system_parts.append("系统画像：\n" + system_profile)
     if user_id is not None:
         system_parts.append(f"当前用户ID：{user_id}（用于工具调用）")
     if system_parts:
@@ -230,9 +234,12 @@ def chat(
         user_message = _add_message(db, convo.id, "user", messages[-1]["content"], current_user.id)
         user_message_id = user_message.id
         memory_summary = fetch_latest_memory_summary(db, current_user.id, resolved_agent)
+        system_profile = fetch_system_profile(db, current_user.id)
+        system_profile_text = system_profile.content if system_profile else None
     else:
         convo = None
         memory_summary = None
+        system_profile_text = None
 
     profile = get_agent_profile(resolved_agent)
     profile_id = profile.get("id") if profile else None
@@ -254,6 +261,7 @@ def chat(
     messages_to_model = _attach_memory_prompt(
         messages_with_hint,
         memory_summary,
+        system_profile_text,
         agent_config.get("title", resolved_agent),
         resolved_agent,
         current_user.id if current_user else None,

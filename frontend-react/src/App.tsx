@@ -7,6 +7,10 @@ import { RegisterPage } from './pages/RegisterPage';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { AdminRoute } from './components/auth/AdminRoute';
 import { AdminPage } from './pages/AdminPage';
+import { AdminUserAcademicsPage } from './pages/AdminUserAcademicsPage';
+import { AdminUserCourseObjectivesPage } from './pages/AdminUserCourseObjectivesPage';
+import { ProfileCourseObjectivesPage } from './pages/ProfileCourseObjectivesPage';
+import { ProfilePage } from './pages/ProfilePage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -44,10 +48,42 @@ function App() {
             }
           />
           <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <ProfilePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/profile/courses/:offeringId"
+            element={
+              <ProtectedRoute>
+                <ProfileCourseObjectivesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/admin"
             element={
               <AdminRoute>
                 <AdminPage />
+              </AdminRoute>
+            }
+          />
+          <Route
+            path="/admin/users/:userId/academics"
+            element={
+              <AdminRoute>
+                <AdminUserAcademicsPage />
+              </AdminRoute>
+            }
+          />
+          <Route
+            path="/admin/users/:userId/courses/:offeringId/objectives"
+            element={
+              <AdminRoute>
+                <AdminUserCourseObjectivesPage />
               </AdminRoute>
             }
           />

@@ -2,13 +2,24 @@ import time
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..config import get_agent_credentials, get_agent_model
 from ..db import get_db
 from ..deps import get_admin_user
-from ..models import AgentRunTrace, Conversation, Message, User, UserProfile
+from ..models import (
+    AgentRunTrace,
+    Conversation,
+    Message,
+    User,
+    UserCourseReport,
+    UserProfile,
+    UserPublicProfile,
+    UserSystemProfile,
+)
 from ..schemas import (
     AdminAgentOut,
     AdminConversationOut,
@@ -16,9 +27,18 @@ from ..schemas import (
     AdminDebugRunResponse,
     AdminRunDetailOut,
     AdminRunSummaryOut,
+    AdminUserImportResult,
     AdminUserOut,
     AdminUserProfileOut,
+    AdminUserProfilesOut,
+    AdminUserUpdate,
+    DMSyncRequest,
+    DMSyncResponse,
+    UserCourseObjectiveOut,
+    UserCourseOut,
+    UserCourseReportOut,
 )
+from ..services.academics import list_course_objectives, list_student_courses
 from ..services.agent_profiles import get_agent_allowed_tools_from_profile, get_agent_profile
 from ..services.agent_prompts import get_agent_allowed_tools, get_agent_system_prompt
 from ..services.agent_router import resolve_agent
@@ -36,13 +56,9 @@ from ..services.orchestrator import (
 )
 from ..services.title import generate_conversation_title
 from ..services.tool_registry import load_tool_registry
-from .chat import (
-    AGENT_CONFIG,
-    PROMPT_TEMPLATE_PATH,
-    _attach_memory_prompt,
-    _build_selected_hint,
-    _validate_messages,
-)
+from ..services.user_import import build_import_template, parse_import_file
+from ..sync import run_dm_sync
+from .chat import AGENT_CONFIG, PROMPT_TEMPLATE_PATH, _attach_memory_prompt, _build_selected_hint, _validate_messages
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -89,14 +105,129 @@ def admin_me(admin_user: User = Depends(get_admin_user)) -> User:
 @router.get("/users", response_model=list[AdminUserOut])
 def list_users(
     q: str | None = Query(default=None, max_length=64),
+    major: str | None = Query(default=None, max_length=100),
+    grade: int | None = Query(default=None),
+    gender: str | None = Query(default=None, max_length=10),
     db: Session = Depends(get_db),
     admin_user: User = Depends(get_admin_user),
 ) -> list[User]:
     query = db.query(User)
     if q:
         like = f"%{q}%"
-        query = query.filter(User.username.ilike(like))
+        query = query.filter(or_(User.username.ilike(like), User.full_name.ilike(like)))
+    if major:
+        query = query.filter(User.major == major)
+    if grade is not None:
+        query = query.filter(User.grade == grade)
+    if gender:
+        query = query.filter(User.gender == gender)
     return query.order_by(User.id.asc()).limit(200).all()
+
+
+@router.get("/users/filters")
+def list_user_filters(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+) -> dict[str, list]:
+    majors = [row[0] for row in db.query(User.major).filter(User.major.isnot(None)).distinct().all()]
+    grades = [row[0] for row in db.query(User.grade).filter(User.grade.isnot(None)).distinct().all()]
+    genders = [row[0] for row in db.query(User.gender).filter(User.gender.isnot(None)).distinct().all()]
+    return {"majors": sorted(majors), "grades": sorted(grades), "genders": sorted(genders)}
+
+
+@router.patch("/users/{user_id}", response_model=AdminUserOut)
+def update_user(
+    user_id: int,
+    payload: AdminUserUpdate,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+) -> User:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(user, field, value)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.post("/users/{user_id}/reset-password")
+def reset_user_password(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+) -> dict[str, str]:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    from ..security import hash_password
+
+    user.hashed_password = hash_password(user.username)
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.get("/users/import-template")
+def download_import_template(
+    admin_user: User = Depends(get_admin_user),
+) -> Response:
+    payload = build_import_template()
+    headers = {"Content-Disposition": "attachment; filename*=UTF-8''user_import_template.xlsx"}
+    return Response(payload, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers)
+
+
+@router.post("/users/import", response_model=AdminUserImportResult)
+def import_users(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+) -> AdminUserImportResult:
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="仅支持 .xlsx 文件")
+    content = file.file.read()
+    rows, errors = parse_import_file(content)
+    if errors:
+        return AdminUserImportResult(total=0, created=0, updated=0, failed=len(errors), errors=errors)
+
+    unique_rows = {row["username"]: row for row in rows}
+    usernames = list(unique_rows.keys())
+    existing_users = db.query(User).filter(User.username.in_(usernames)).all()
+    existing_map = {user.username: user for user in existing_users}
+
+    created = 0
+    updated = 0
+    from ..security import hash_password
+
+    for username, row in unique_rows.items():
+        user = existing_map.get(username)
+        if user:
+            user.full_name = row["full_name"]
+            user.major = row["major"]
+            user.grade = row["grade"]
+            user.gender = row["gender"]
+            updated += 1
+        else:
+            db.add(
+                User(
+                    username=username,
+                    email=None,
+                    full_name=row["full_name"],
+                    major=row["major"],
+                    grade=row["grade"],
+                    gender=row["gender"],
+                    hashed_password=hash_password(username),
+                )
+            )
+            created += 1
+    db.commit()
+    return AdminUserImportResult(
+        total=len(unique_rows),
+        created=created,
+        updated=updated,
+        failed=0,
+        errors=[],
+    )
 
 
 @router.get("/users/{user_id}/profile", response_model=AdminUserProfileOut)
@@ -107,6 +238,78 @@ def get_user_profile(
 ) -> AdminUserProfileOut:
     profile = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
     return AdminUserProfileOut(user_id=user_id, data=profile.data if profile else {})
+
+
+@router.get("/users/{user_id}", response_model=AdminUserOut)
+def get_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+) -> User:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return user
+
+
+@router.get("/users/{user_id}/profiles", response_model=AdminUserProfilesOut)
+def get_user_profiles(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+) -> AdminUserProfilesOut:
+    system_profile = db.query(UserSystemProfile).filter(UserSystemProfile.user_id == user_id).first()
+    public_profile = db.query(UserPublicProfile).filter(UserPublicProfile.user_id == user_id).first()
+    return AdminUserProfilesOut(
+        user_id=user_id,
+        system_profile=system_profile.content if system_profile else None,
+        public_profile=public_profile.content if public_profile else None,
+        system_updated_at=system_profile.updated_at if system_profile else None,
+        public_updated_at=public_profile.updated_at if public_profile else None,
+    )
+
+
+@router.get("/users/{user_id}/academics", response_model=list[UserCourseOut])
+def get_user_academics(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+) -> list[dict]:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return list_student_courses(db, user.username, role="admin")
+
+
+@router.get("/users/{user_id}/courses/{offering_id}/objectives", response_model=list[UserCourseObjectiveOut])
+def get_user_course_objectives(
+    user_id: int,
+    offering_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+) -> list[dict]:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return list_course_objectives(db, user.username, offering_id, role="admin")
+
+
+@router.get("/users/{user_id}/courses/{offering_id}/report", response_model=UserCourseReportOut)
+def get_user_course_report(
+    user_id: int,
+    offering_id: int,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_admin_user),
+) -> UserCourseReportOut:
+    report = (
+        db.query(UserCourseReport)
+        .filter(UserCourseReport.user_id == user_id, UserCourseReport.offering_id == offering_id)
+        .first()
+    )
+    return UserCourseReportOut(
+        content=report.content if report else None,
+        updated_at=report.updated_at if report else None,
+    )
 
 
 @router.get("/agents", response_model=list[AdminAgentOut])
@@ -519,4 +722,24 @@ def debug_run(
         conversation_id=convo.id,
         trace_id=trace_id,
         final_text=final_text,
+    )
+
+
+@router.post("/dm-sync", response_model=DMSyncResponse)
+def trigger_dm_sync(
+    payload: DMSyncRequest,
+    admin_user: User = Depends(get_admin_user),
+) -> DMSyncResponse:
+    _ = admin_user
+    result = run_dm_sync(
+        job_name=payload.job_name,
+        entities=payload.entities,
+        term_window=payload.term_window,
+        batch_size=payload.batch_size,
+    )
+    return DMSyncResponse(
+        job_id=result["job_id"],
+        job_name=result["job_name"],
+        status=result["status"],
+        detail=result["detail"],
     )
