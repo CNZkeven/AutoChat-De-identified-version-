@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, text
 
 from ..config import ACHIEVE_DB_DSN, DATABASE_URL, SYNC_BATCH_SIZE, SYNC_TERM_WINDOW
 from ..db import Base
-from ..services.dm_bootstrap import ensure_dm_rls, ensure_dm_schemas
+from ..services.dm_bootstrap import ensure_dm_columns, ensure_dm_rls, ensure_dm_schemas
 
 logger = logging.getLogger(__name__)
 
@@ -807,6 +807,7 @@ def run_dm_sync(
 
     ensure_dm_schemas(local_engine)
     Base.metadata.create_all(bind=local_engine)
+    ensure_dm_columns(local_engine)
     ensure_dm_rls(local_engine)
 
     job_id = str(uuid.uuid4())
