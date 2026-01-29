@@ -350,6 +350,7 @@ class DmStudent(Base):
     full_name = Column(String(100), nullable=False)
     program_id = Column(Integer, nullable=True)
     grade_id = Column(Integer, nullable=True)
+    grade_year = Column(Integer, nullable=True)
     class_name = Column(String(50), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -454,6 +455,8 @@ class DmCourseOffering(Base):
     class_number = Column(String(100), nullable=True)
     program_id = Column(Integer, nullable=True)
     grade_year = Column(Integer, nullable=True)
+    selected_syllabus_version_id = Column(Integer, nullable=True)
+    is_in_class_experiment = Column(Boolean, default=False)
     updated_at = Column(DateTime(timezone=True), nullable=True)
 
 
@@ -516,6 +519,19 @@ class DmSyllabusVersion(Base):
     status = Column(String(20), nullable=True)
     basic_info = Column(Text, nullable=True)
     process_requirements = Column(Text, nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DmSyllabusVersionProgram(Base):
+    __tablename__ = "syllabus_version_programs"
+    __table_args__ = (
+        Index("idx_dm_svp_version", "syllabus_version_id"),
+        Index("idx_dm_svp_program_version", "training_program_version_id"),
+        {"schema": "dm"},
+    )
+
+    syllabus_version_id = Column(Integer, primary_key=True)
+    training_program_version_id = Column(Integer, primary_key=True)
     updated_at = Column(DateTime(timezone=True), nullable=True)
 
 
