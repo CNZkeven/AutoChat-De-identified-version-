@@ -213,7 +213,7 @@ export function ProfilePage() {
                 <button
                   type="button"
                   onClick={handleGenerateProfile}
-                  className="px-3 py-2 rounded-lg bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
+                  className="btn-soft-success"
                 >
                   生成画像
                 </button>
@@ -263,7 +263,7 @@ export function ProfilePage() {
                           <td className="px-3 py-2">
                             <button
                               type="button"
-                              className="px-3 py-1.5 rounded-lg bg-blue-500/20 text-blue-100 hover:bg-blue-500/30"
+                              className="btn-soft-primary"
                               onClick={() => navigate(`/profile/courses/${course.offering_id}`)}
                             >
                               查看课程目标达成
@@ -285,7 +285,7 @@ export function ProfilePage() {
                 <button
                   type="button"
                   onClick={handleRefreshRequirements}
-                  className="px-3 py-2 rounded-lg bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
+                  className="btn-soft-primary"
                 >
                   刷新数据
                 </button>
@@ -320,11 +320,7 @@ export function ProfilePage() {
                           </div>
                           <div className="flex items-center gap-2">
                             <span
-                              className={`text-xs px-2 py-1 rounded-full ${
-                                req.achieved
-                                  ? 'bg-emerald-500/20 text-emerald-100'
-                                  : 'bg-amber-500/20 text-amber-100'
-                              }`}
+                              className={req.achieved ? 'badge-success' : 'badge-warning'}
                             >
                               {req.achieved ? '已达成' : '待提升'}
                             </span>
@@ -375,7 +371,7 @@ export function ProfilePage() {
                 <button
                   type="button"
                   onClick={handleGenerateAcademicReport}
-                  className="px-3 py-2 rounded-lg bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
+                  className="btn-soft-success"
                 >
                   生成报告
                 </button>

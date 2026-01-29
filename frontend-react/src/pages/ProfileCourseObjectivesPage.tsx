@@ -62,7 +62,7 @@ export function ProfileCourseObjectivesPage() {
               <button
                 type="button"
                 onClick={() => navigate('/profile?tab=academics')}
-                className="px-3 py-2 text-sm rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700 transition"
+                className="btn-soft-primary"
               >
                 返回学业情况
               </button>
@@ -115,7 +115,7 @@ export function ProfileCourseObjectivesPage() {
               <button
                 type="button"
                 onClick={handleGenerateReport}
-                className="px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30"
+                className="btn-soft-success"
               >
                 生成报告
               </button>
