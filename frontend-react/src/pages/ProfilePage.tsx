@@ -23,11 +23,34 @@ type RequirementItem = {
   children?: RequirementItem[];
 };
 
+const parseIndexParts = (value?: string | number) => {
+  if (value === null || value === undefined) return [];
+  const matches = String(value).match(/\d+/g);
+  return matches ? matches.map((item) => Number(item)) : [];
+};
+
+const compareIndexParts = (a?: string | number, b?: string | number) => {
+  const partsA = parseIndexParts(a);
+  const partsB = parseIndexParts(b);
+  if (partsA.length === 0 && partsB.length === 0) return 0;
+  if (partsA.length === 0) return 1;
+  if (partsB.length === 0) return -1;
+  const maxLength = Math.max(partsA.length, partsB.length);
+  for (let i = 0; i < maxLength; i += 1) {
+    const valueA = partsA[i] ?? 0;
+    const valueB = partsB[i] ?? 0;
+    if (valueA !== valueB) {
+      return valueA - valueB;
+    }
+  }
+  return 0;
+};
+
 export function ProfilePage() {
   const { user, setUser } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
-  const [activeTab, setActiveTab] = useState<ProfileTab>('base');
+  const [selectedTab, setSelectedTab] = useState<ProfileTab | null>(null);
   const [publicProfile, setPublicProfile] = useState<UserProfile | null>(null);
   const [courses, setCourses] = useState<UserCourse[]>([]);
   const [requirements, setRequirements] = useState<UserGraduationRequirement | null>(null);
@@ -35,14 +58,14 @@ export function ProfilePage() {
   const [status, setStatus] = useState('');
   const [expandedRequirements, setExpandedRequirements] = useState<Record<number, boolean>>({});
 
-  useEffect(() => {
+  const queryTab = useMemo(() => {
     const params = new URLSearchParams(location.search);
     const tab = params.get('tab');
     const allowedTabs: ProfileTab[] = ['base', 'profile', 'academics', 'requirements', 'report'];
-    if (tab && allowedTabs.includes(tab as ProfileTab)) {
-      setActiveTab(tab as ProfileTab);
-    }
+    return tab && allowedTabs.includes(tab as ProfileTab) ? (tab as ProfileTab) : null;
   }, [location.search]);
+
+  const activeTab = selectedTab ?? queryTab ?? 'base';
 
   useEffect(() => {
     authService.getCurrentUser().then(setUser).catch(() => undefined);
@@ -78,29 +101,6 @@ export function ProfilePage() {
   const formatPercentile = (value?: number | null) => {
     if (value === null || value === undefined) return '-';
     return `${(value * 100).toFixed(1)}%`;
-  };
-
-  const parseIndexParts = (value?: string | number) => {
-    if (value === null || value === undefined) return [];
-    const matches = String(value).match(/\d+/g);
-    return matches ? matches.map((item) => Number(item)) : [];
-  };
-
-  const compareIndexParts = (a?: string | number, b?: string | number) => {
-    const partsA = parseIndexParts(a);
-    const partsB = parseIndexParts(b);
-    if (partsA.length === 0 && partsB.length === 0) return 0;
-    if (partsA.length === 0) return 1;
-    if (partsB.length === 0) return -1;
-    const maxLength = Math.max(partsA.length, partsB.length);
-    for (let i = 0; i < maxLength; i += 1) {
-      const valueA = partsA[i] ?? 0;
-      const valueB = partsB[i] ?? 0;
-      if (valueA !== valueB) {
-        return valueA - valueB;
-      }
-    }
-    return 0;
   };
 
   const groupedRequirements = useMemo(() => {
@@ -185,7 +185,7 @@ export function ProfilePage() {
                     ? 'bg-blue-600 text-white'
                     : 'bg-gray-100/80 dark:bg-gray-800/80 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700'
                 }`}
-                onClick={() => setActiveTab(tab.key)}
+                onClick={() => setSelectedTab(tab.key)}
               >
                 {tab.label}
               </button>
