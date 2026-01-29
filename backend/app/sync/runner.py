@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, text
 
 from ..config import ACHIEVE_DB_DSN, DATABASE_URL, SYNC_BATCH_SIZE, SYNC_TERM_WINDOW
 from ..db import Base
-from ..services.dm_bootstrap import ensure_dm_rls, ensure_dm_schemas
+from ..services.dm_bootstrap import ensure_dm_columns, ensure_dm_rls, ensure_dm_schemas
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +94,20 @@ def _fetch_rows(conn, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _sync_students(achieve_conn, local_conn, batch_size: int) -> dict[str, Any]:
     last_updated = _get_watermark(local_conn, "students")
+    has_rows = local_conn.execute(text("SELECT 1 FROM dm.students LIMIT 1")).first()
+    if has_rows:
+        has_grade_year = local_conn.execute(
+            text("SELECT 1 FROM dm.students WHERE grade_year IS NOT NULL LIMIT 1")
+        ).first()
+        if not has_grade_year:
+            last_updated = None
     params = {"updated_after": last_updated}
     sql = """
 SELECT id AS student_id,
        student_id_number AS student_no,
        full_name,
        program_id,
+       NULLIF(regexp_replace(grade, '\\D', '', 'g'), '')::int AS grade_year,
        grade_id,
        class_name,
        updated_at
@@ -112,14 +120,15 @@ SELECT id AS student_id,
     insert_sql = text(
         """
 INSERT INTO dm.students(
-    student_id, student_no, full_name, program_id, grade_id, class_name, updated_at
+    student_id, student_no, full_name, program_id, grade_year, grade_id, class_name, updated_at
 ) VALUES (
-    :student_id, :student_no, :full_name, :program_id, :grade_id, :class_name, :updated_at
+    :student_id, :student_no, :full_name, :program_id, :grade_year, :grade_id, :class_name, :updated_at
 )
 ON CONFLICT (student_id) DO UPDATE
 SET student_no = EXCLUDED.student_no,
     full_name = EXCLUDED.full_name,
     program_id = EXCLUDED.program_id,
+    grade_year = EXCLUDED.grade_year,
     grade_id = EXCLUDED.grade_id,
     class_name = EXCLUDED.class_name,
     updated_at = EXCLUDED.updated_at
@@ -421,6 +430,21 @@ def _sync_course_offerings(
     terms: list[str] | None,
 ) -> dict[str, Any]:
     last_updated = _get_watermark(local_conn, "course_offerings")
+    has_rows = local_conn.execute(text("SELECT 1 FROM dm.course_offerings LIMIT 1")).first()
+    if has_rows:
+        has_flags = local_conn.execute(
+            text(
+                """
+SELECT 1
+  FROM dm.course_offerings
+ WHERE selected_syllabus_version_id IS NOT NULL
+    OR is_in_class_experiment IS NOT NULL
+ LIMIT 1
+"""
+            )
+        ).first()
+        if not has_flags:
+            last_updated = None
     params = {"updated_after": last_updated, "terms": terms}
     sql = """
 SELECT o.id AS offering_id,
@@ -430,6 +454,8 @@ SELECT o.id AS offering_id,
        u.full_name AS teacher_name,
        o.section_name,
        o.class_number,
+       o.selected_syllabus_version_id,
+       o.is_in_class_experiment,
        o.program_id,
        o.grade_year,
        o.updated_at
@@ -446,10 +472,12 @@ SELECT o.id AS offering_id,
         """
 INSERT INTO dm.course_offerings(
     offering_id, course_id, term_id, teacher_id, teacher_name,
-    section_name, class_number, program_id, grade_year, updated_at
+    section_name, class_number, selected_syllabus_version_id, is_in_class_experiment,
+    program_id, grade_year, updated_at
 ) VALUES (
     :offering_id, :course_id, :term_id, :teacher_id, :teacher_name,
-    :section_name, :class_number, :program_id, :grade_year, :updated_at
+    :section_name, :class_number, :selected_syllabus_version_id, :is_in_class_experiment,
+    :program_id, :grade_year, :updated_at
 )
 ON CONFLICT (offering_id) DO UPDATE
 SET course_id = EXCLUDED.course_id,
@@ -458,6 +486,8 @@ SET course_id = EXCLUDED.course_id,
     teacher_name = EXCLUDED.teacher_name,
     section_name = EXCLUDED.section_name,
     class_number = EXCLUDED.class_number,
+    selected_syllabus_version_id = EXCLUDED.selected_syllabus_version_id,
+    is_in_class_experiment = EXCLUDED.is_in_class_experiment,
     program_id = EXCLUDED.program_id,
     grade_year = EXCLUDED.grade_year,
     updated_at = EXCLUDED.updated_at
@@ -620,6 +650,36 @@ SET course_id = EXCLUDED.course_id,
     basic_info = EXCLUDED.basic_info,
     process_requirements = EXCLUDED.process_requirements,
     updated_at = EXCLUDED.updated_at
+"""
+    )
+    for chunk in _chunked(rows, batch_size):
+        local_conn.execute(insert_sql, chunk)
+    max_updated = max(row["updated_at"] for row in rows if row.get("updated_at"))
+    return {"rows": len(rows), "updated_at": max_updated}
+
+
+def _sync_syllabus_version_programs(achieve_conn, local_conn, batch_size: int) -> dict[str, Any]:
+    last_updated = _get_watermark(local_conn, "syllabus_version_programs")
+    params = {"updated_after": last_updated}
+    sql = """
+SELECT syllabus_version_id,
+       training_program_version_id,
+       updated_at
+  FROM syllabus_version_programs
+ WHERE updated_at > COALESCE(:updated_after, 'epoch'::timestamptz)
+"""
+    rows = _fetch_rows(achieve_conn, sql, params)
+    if not rows:
+        return {"rows": 0, "updated_at": last_updated}
+    insert_sql = text(
+        """
+INSERT INTO dm.syllabus_version_programs(
+    syllabus_version_id, training_program_version_id, updated_at
+) VALUES (
+    :syllabus_version_id, :training_program_version_id, :updated_at
+)
+ON CONFLICT (syllabus_version_id, training_program_version_id) DO UPDATE
+SET updated_at = EXCLUDED.updated_at
 """
     )
     for chunk in _chunked(rows, batch_size):
@@ -807,6 +867,7 @@ def run_dm_sync(
 
     ensure_dm_schemas(local_engine)
     Base.metadata.create_all(bind=local_engine)
+    ensure_dm_columns(local_engine)
     ensure_dm_rls(local_engine)
 
     job_id = str(uuid.uuid4())
@@ -828,6 +889,7 @@ def run_dm_sync(
         "enrollments",
         "student_scores",
         "syllabus_versions",
+        "syllabus_version_programs",
         "course_objectives",
         "objective_requirement_mapping",
         "objective_achievements",
@@ -859,6 +921,8 @@ def run_dm_sync(
                     result = _sync_student_scores(achieve_conn, local_conn, batch, terms)
                 elif entity == "syllabus_versions":
                     result = _sync_syllabus_versions(achieve_conn, local_conn, batch)
+                elif entity == "syllabus_version_programs":
+                    result = _sync_syllabus_version_programs(achieve_conn, local_conn, batch)
                 elif entity == "course_objectives":
                     result = _sync_course_objectives(achieve_conn, local_conn, batch)
                 elif entity == "objective_requirement_mapping":

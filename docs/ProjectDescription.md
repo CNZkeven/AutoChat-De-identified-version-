@@ -10,6 +10,7 @@ Academic data now syncs from Achieve into the local dm schema, and agents read v
 课程/学业查询工具已扩展结构化过滤参数（专业/版本/课程性质/类别/课程名/课程号），并补充学业成绩的 list_scores 能力，
 同时完善了工具日志与回放记录的序列化稳定性。
 新增管理员用户管理与用户个人中心：支持批量导入、筛选编辑、画像与学业展示，以及用户侧毕业要求与报告生成。
+学业展示默认过滤课内实验教学班，学业列表使用教学班号呈现；课程目标根据学生培养方案版本与教学班指定大纲筛选。
 
 ## Docker Compose
 - Recommended cross-platform dev entrypoint: `cp .env.example .env` then `./scripts/start.sh` (or `docker compose up --build`).

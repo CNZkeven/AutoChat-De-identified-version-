@@ -11,6 +11,24 @@ def ensure_dm_schemas(engine: Engine) -> None:
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS stg"))
 
 
+def ensure_dm_columns(engine: Engine) -> None:
+    column_sql = """
+DO $$
+BEGIN
+  IF to_regclass('dm.students') IS NOT NULL THEN
+    EXECUTE 'ALTER TABLE dm.students ADD COLUMN IF NOT EXISTS grade_year integer';
+  END IF;
+
+  IF to_regclass('dm.course_offerings') IS NOT NULL THEN
+    EXECUTE 'ALTER TABLE dm.course_offerings ADD COLUMN IF NOT EXISTS selected_syllabus_version_id integer';
+    EXECUTE 'ALTER TABLE dm.course_offerings ADD COLUMN IF NOT EXISTS is_in_class_experiment boolean';
+  END IF;
+END $$;
+"""
+    with engine.begin() as conn:
+        conn.execute(text(column_sql))
+
+
 def ensure_dm_rls(engine: Engine) -> None:
     policy_sql = """
 DO $$
