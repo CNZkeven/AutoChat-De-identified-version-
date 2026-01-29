@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -23,7 +24,65 @@ SELECT student_id, program_id, grade_id
     return dict(row) if row else {}
 
 
-def _fetch_requirements(db: Session, program_id: int) -> list[dict[str, Any]]:
+def _fetch_program_id_by_major(db: Session, major: str | None) -> int | None:
+    if not major:
+        return None
+    sql = """
+SELECT program_id
+  FROM dm.programs
+ WHERE name ILIKE :major
+ ORDER BY length(name) DESC
+ LIMIT 1
+"""
+    row = db.execute(text(sql), {"major": f"%{major}%"}).mappings().first()
+    return int(row["program_id"]) if row else None
+
+
+def _fetch_program_versions(db: Session, program_id: int) -> list[dict[str, Any]]:
+    sql = """
+SELECT program_version_id,
+       version_name,
+       updated_at,
+       is_active
+  FROM dm.program_versions
+ WHERE program_id = :program_id
+ ORDER BY is_active DESC, updated_at DESC NULLS LAST
+"""
+    rows = db.execute(text(sql), {"program_id": program_id}).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def _extract_version_year(version_name: str | None) -> int | None:
+    if not version_name:
+        return None
+    match = re.search(r"(20\d{2})", version_name)
+    return int(match.group(1)) if match else None
+
+
+def _select_program_version(versions: list[dict[str, Any]], grade_year: int | None) -> dict[str, Any] | None:
+    if not versions:
+        return None
+    candidates = []
+    if grade_year:
+        for version in versions:
+            year = _extract_version_year(version.get("version_name"))
+            if year is not None and year <= grade_year:
+                candidates.append({**version, "_version_year": year})
+    selected_pool = candidates or versions
+
+    def sort_key(item: dict[str, Any]) -> tuple[int, datetime]:
+        year = item.get("_version_year")
+        if year is None:
+            year = _extract_version_year(item.get("version_name")) or -1
+        updated_at = item.get("updated_at") or datetime.min
+        return (year, updated_at)
+
+    return max(selected_pool, key=sort_key)
+
+
+def _fetch_requirements(
+    db: Session, program_id: int, program_version_id: int | None
+) -> list[dict[str, Any]]:
     sql = """
 SELECT requirement_id AS id,
        requirement_index AS index,
@@ -33,20 +92,28 @@ SELECT requirement_id AS id,
        training_program_version_id
   FROM dm.graduation_requirements
  WHERE program_id = :program_id
+   AND (:program_version_id IS NULL OR training_program_version_id = :program_version_id)
  ORDER BY level ASC NULLS LAST, requirement_index ASC NULLS LAST
 """
-    rows = db.execute(text(sql), {"program_id": program_id}).mappings().all()
+    rows = db.execute(
+        text(sql), {"program_id": program_id, "program_version_id": program_version_id}
+    ).mappings().all()
     return [dict(row) for row in rows]
 
 
-def _fetch_requirement_mappings(db: Session, program_id: int) -> list[dict[str, Any]]:
+def _fetch_requirement_mappings(
+    db: Session, program_id: int, program_version_id: int | None
+) -> list[dict[str, Any]]:
     sql = """
 SELECT orm.objective_id, orm.requirement_id
   FROM dm.objective_requirement_mapping orm
   JOIN dm.graduation_requirements gr ON gr.requirement_id = orm.requirement_id
  WHERE gr.program_id = :program_id
+   AND (:program_version_id IS NULL OR gr.training_program_version_id = :program_version_id)
 """
-    rows = db.execute(text(sql), {"program_id": program_id}).mappings().all()
+    rows = db.execute(
+        text(sql), {"program_id": program_id, "program_version_id": program_version_id}
+    ).mappings().all()
     return [dict(row) for row in rows]
 
 
@@ -66,14 +133,28 @@ def build_requirement_snapshot(db: Session, user: User) -> dict[str, Any]:
     meta = _fetch_program_id(db, student_no)
     program_id = meta.get("program_id")
     if not program_id:
+        program_id = _fetch_program_id_by_major(db, user.major)
+    if not program_id:
         return {
             "program_id": None,
+            "program_version_id": None,
+            "program_version_year": None,
             "requirements": [],
+            "requirements_grouped": [],
             "summary": {"total": 0, "achieved": 0, "threshold": ACHIEVEMENT_THRESHOLD},
         }
 
-    requirements = _fetch_requirements(db, program_id)
-    mappings = _fetch_requirement_mappings(db, program_id)
+    versions = _fetch_program_versions(db, program_id)
+    selected_version = _select_program_version(versions, user.grade)
+    program_version_id = (
+        int(selected_version["program_version_id"]) if selected_version else None
+    )
+    program_version_year = (
+        _extract_version_year(selected_version.get("version_name")) if selected_version else None
+    )
+
+    requirements = _fetch_requirements(db, program_id, program_version_id)
+    mappings = _fetch_requirement_mappings(db, program_id, program_version_id)
     student_scores = _fetch_student_objective_scores(db, student_no)
 
     score_map: dict[int, list[float]] = {}
@@ -115,12 +196,25 @@ def build_requirement_snapshot(db: Session, user: User) -> dict[str, Any]:
                 "achieved": achieved,
                 "objective_count": len(objective_ids),
                 "covered_objectives": len(collected_scores),
+                "children": [],
             }
         )
 
+    requirement_map = {item["id"]: item for item in result_requirements}
+    grouped_requirements = []
+    for item in result_requirements:
+        parent_id = item.get("parent_id")
+        if parent_id is not None and parent_id in requirement_map:
+            requirement_map[parent_id]["children"].append(item)
+        else:
+            grouped_requirements.append(item)
+
     return {
         "program_id": program_id,
+        "program_version_id": program_version_id,
+        "program_version_year": program_version_year,
         "requirements": result_requirements,
+        "requirements_grouped": grouped_requirements,
         "summary": {
             "total": len(result_requirements),
             "achieved": achieved_count,
@@ -142,6 +236,7 @@ def get_or_refresh_snapshot(db: Session, user: User, force_refresh: bool = False
     source_snapshot = {
         "generated_at": datetime.utcnow().isoformat(),
         "program_id": data.get("program_id"),
+        "program_version_id": data.get("program_version_id"),
     }
 
     if existing:
