@@ -9,7 +9,7 @@ interface LayoutProps {
 
 export function Layout({ children, title, agentColor, showNavbar = true }: LayoutProps) {
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
+    <div className="min-h-screen transition-colors page">
       {showNavbar && <Navbar title={title} agentColor={agentColor} />}
       {children}
     </div>
