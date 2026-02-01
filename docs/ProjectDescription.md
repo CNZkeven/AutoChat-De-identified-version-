@@ -20,6 +20,9 @@ Academic data now syncs from Achieve into the local dm schema, and agents read v
 - `scripts/start.sh` 会在 5433-5499 范围内自动选择可用端口并记录到 `.logs/compose-ports.env`。
 - 前端端口固定为 5174，若被占用会在启动前清理占用进程。
 
+## Deployment Bundle
+- Production deployment assets live under `deploy/` (git-ignored), including scripts, images, and runbook documentation.
+
 ## React Frontend Notes
 - Frontend is implemented only in `frontend-react` (legacy `frontend` directory removed).
 - Uses Vite dev server. `VITE_API_URL` points to backend.
