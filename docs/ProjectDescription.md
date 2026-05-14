@@ -67,9 +67,8 @@ Academic data now syncs from Achieve into the local dm schema, and agents read v
 - 管理端学业 API: `/api/admin/users/{user_id}/academics` 与 `/api/admin/users/{user_id}/courses/{offering_id}/objectives`。
 
 ## Demo Account
-- Username: demo
-- Password: demo@Just
-- Admin: admin / admin@Just
+- 请通过环境变量 `DEMO_USER_PASSWORD` 和 `ADMIN_USER_PASSWORD` 配置种子用户密码
+- 参见 `.env.example` 中的 `Seed user passwords` 部分
 
 ## Environment Variables
 - `DATABASE_URL`, `JWT_SECRET_KEY`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `CORS_ORIGINS`

@@ -1,4 +1,5 @@
 import logging
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,26 +31,30 @@ def on_startup() -> None:
     ensure_dm_rls(engine)
     db = SessionLocal()
     try:
-        demo_user = db.query(User).filter(User.username == "demo").first()
-        if not demo_user:
-            db.add(
-                User(
-                    username="demo",
-                    email=None,
-                    hashed_password=hash_password("demo@Just"),
+        demo_password = os.environ.get("DEMO_USER_PASSWORD", "")
+        admin_password = os.environ.get("ADMIN_USER_PASSWORD", "")
+        if demo_password:
+            demo_user = db.query(User).filter(User.username == "demo").first()
+            if not demo_user:
+                db.add(
+                    User(
+                        username="demo",
+                        email=None,
+                        hashed_password=hash_password(demo_password),
+                    )
                 )
-            )
-            db.commit()
-        admin_user = db.query(User).filter(User.username == "admin").first()
-        if not admin_user:
-            db.add(
-                User(
-                    username="admin",
-                    email=None,
-                    hashed_password=hash_password("admin@Just"),
+                db.commit()
+        if admin_password:
+            admin_user = db.query(User).filter(User.username == "admin").first()
+            if not admin_user:
+                db.add(
+                    User(
+                        username="admin",
+                        email=None,
+                        hashed_password=hash_password(admin_password),
+                    )
                 )
-            )
-            db.commit()
+                db.commit()
     except SQLAlchemyError:
         logging.exception("Failed to ensure demo user exists")
         db.rollback()

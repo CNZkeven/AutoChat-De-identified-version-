@@ -17,12 +17,14 @@ def load_accounts(path: Path) -> list[tuple[str, str | None]]:
     accounts: list[tuple[str, str | None]] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
-        if not line:
+        if not line or line.startswith("#") or line.startswith(">") or line.startswith("```") or line.startswith("<"):
             continue
         parts = line.split()
         if not parts:
             continue
         student_no = parts[0]
+        if student_no.startswith("<"):
+            continue
         name = "".join(parts[1:]) if len(parts) > 1 else None
         accounts.append((student_no, name))
     return accounts

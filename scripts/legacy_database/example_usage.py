@@ -104,12 +104,12 @@ def example_workflow():
 
     # 1. 注册用户
     print("\n1. 注册新用户...")
-    user_data = client.register("testuser", "test@example.com", "password123")
+    user_data = client.register("testuser", "test@example.com", "<your-password>")
     print(json.dumps(user_data, indent=2, ensure_ascii=False))
 
     # 2. 登录
     print("\n2. 用户登录...")
-    login_result = client.login("testuser", "password123")
+    login_result = client.login("testuser", "<your-password>")
     print(f"Token: {client.token[:50]}...")
 
     # 3. 创建知识条目

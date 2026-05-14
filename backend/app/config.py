@@ -7,7 +7,7 @@ LOG_DIR = Path(os.environ.get("LOG_DIR", PROJECT_ROOT / ".logs"))
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql+psycopg://localhost:5432/autochat")
 
-JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "change-this-secret")
+JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "")
 JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))
 
@@ -37,7 +37,7 @@ REPORT_BASE_URL = os.environ.get("REPORT_BASE_URL", "")
 REPORT_MODEL = os.environ.get("REPORT_MODEL", "")
 
 EXTERNAL_API_BASE_URL = os.environ.get("EXTERNAL_API_BASE_URL", "http://localhost:3000")
-EXTERNAL_JWT_SECRET = os.environ.get("EXTERNAL_JWT_SECRET", "external-jwt-dev-secret")
+EXTERNAL_JWT_SECRET = os.environ.get("EXTERNAL_JWT_SECRET", "")
 EXTERNAL_JWT_ISSUER = os.environ.get("EXTERNAL_JWT_ISSUER", "external-system")
 EXTERNAL_JWT_AUDIENCE = os.environ.get("EXTERNAL_JWT_AUDIENCE", "course-analysis-external")
 EXTERNAL_JWT_EXPIRE_MINUTES = int(os.environ.get("EXTERNAL_JWT_EXPIRE_MINUTES", "60"))

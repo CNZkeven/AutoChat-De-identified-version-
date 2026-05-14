@@ -1,6 +1,7 @@
 # Achieve Analysis 远程只读访问（SSH 隧道）
 
 > 适用场景：开发机通过 SSH 隧道读取服务器数据库（只读），不对外暴露 5432。
+> **注意：本文件为脱敏版本，实际凭证请通过环境变量或密钥管理工具获取。**
 
 ## 连接方式（SSH 隧道）
 
@@ -10,46 +11,42 @@
 podman inspect -f '{{(index .NetworkSettings.Networks "achieve-network").IPAddress}}' achieve-analysis-db
 ```
 
-最新获取IP：10.89.0.149
-
 2) 在开发机建立 SSH 隧道（示例本地端口 15432）：
 
 ```bash
-ssh -L 15432:10.89.0.149:5432 root@achieve.adapt-learn.online
+ssh -L 15432:<db-container-ip>:5432 <user>@<your-server-domain>
 ```
 
 3) 在本地设置连接字符串（ACHIEVE_DB_DSN）：
 
 ```text
-postgresql+psycopg://dm_reader:dm_reader%40Achieve@127.0.0.1:15432/course_analysis_db?sslmode=require
+postgresql+psycopg://<db_user>:<db_password>@127.0.0.1:15432/<db_name>?sslmode=require
 ```
-
-> 说明：`dm_reader@Achieve` 中的 `@` 需要 URL 编码为 `%40`。
 
 ## 当前数据库连接信息
 
-- DB 名称：`course_analysis_db`
-- 只读账号：`dm_reader`
-- 密码：`dm_reader@Achieve`
+- DB 名称：`<db_name>`
+- 只读账号：`<db_user>`
+- 密码：`<db_password>`（通过环境变量 `ACHIEVE_DB_DSN` 配置）
 - SSL：已开启（`ssl = on`），本地建议 `sslmode=require`
 
 ## 服务器端已做的配置
 
 - **开启 SSL**
-  - 配置文件：`/var/lib/containers/storage/volumes/achieve_postgres_data/_data/postgresql.conf`
+  - 配置文件：`<pg_data_dir>/postgresql.conf`
   - 已修改项：`ssl = on`
   - 证书文件：
-    - `/var/lib/containers/storage/volumes/achieve_postgres_data/_data/server.crt`
-    - `/var/lib/containers/storage/volumes/achieve_postgres_data/_data/server.key`
+    - `<pg_data_dir>/server.crt`
+    - `<pg_data_dir>/server.key`
 - **只读账号与授权**
-  - 账号：`dm_reader`（无 BYPASSRLS）
+  - 账号：`<db_user>`（无 BYPASSRLS）
   - 权限：
-    - `GRANT CONNECT ON DATABASE course_analysis_db TO dm_reader;`
-    - `GRANT USAGE ON SCHEMA public TO dm_reader;`
-    - `GRANT SELECT ON ALL TABLES IN SCHEMA public TO dm_reader;`
-    - `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO dm_reader;`
-    - `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO dm_reader;`
-    - `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO dm_reader;`
+    - `GRANT CONNECT ON DATABASE <db_name> TO <db_user>;`
+    - `GRANT USAGE ON SCHEMA public TO <db_user>;`
+    - `GRANT SELECT ON ALL TABLES IN SCHEMA public TO <db_user>;`
+    - `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO <db_user>;`
+    - `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO <db_user>;`
+    - `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO <db_user>;`
 - **未改动项**
   - 未暴露 5432 到公网或宿主机
   - 未修改 `docker-compose.production.yml`
@@ -64,5 +61,5 @@ postgresql+psycopg://dm_reader:dm_reader%40Achieve@127.0.0.1:15432/course_analys
 ## 本地连通性测试（开发机）
 
 ```bash
-PGPASSWORD='dm_reader@Achieve' psql "host=127.0.0.1 port=15432 dbname=course_analysis_db user=dm_reader sslmode=require" -c "select 1;"
+PGPASSWORD='<db_password>' psql "host=127.0.0.1 port=15432 dbname=<db_name> user=<db_user> sslmode=require" -c "select 1;"
 ```
