@@ -1,5 +1,6 @@
 .logs/
 .pgdata/
+.codegraph/
 .DS_Store
 .serena/
 .worktrees/
@@ -10,6 +11,7 @@ node_modules/
 .ruff_cache/
 .pytest_cache/
 npm-debug.log*
+*.rdb
 data/
 
 AGENTS.md
