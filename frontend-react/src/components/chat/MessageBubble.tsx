@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import type { Message } from '../../types';
+import { normalizeAssistantMarkdown } from '../../utils/markdownContent';
 
 interface MessageBubbleProps {
   message: Message;
@@ -22,6 +23,7 @@ export const MessageBubble = memo(function MessageBubble({
   selectionMode,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const displayContent = isUser ? message.content : normalizeAssistantMarkdown(message.content);
 
   return (
     <div
@@ -73,7 +75,7 @@ export const MessageBubble = memo(function MessageBubble({
           style={!isUser && agentColor ? { backgroundColor: agentColor } : undefined}
         >
           {isUser ? (
-            <p className="whitespace-pre-wrap break-words">{message.content}</p>
+            <p className="whitespace-pre-wrap break-words">{displayContent}</p>
           ) : (
             <div className="markdown-body prose prose-sm prose-invert max-w-none prose-p:my-1 prose-headings:my-2">
               <ReactMarkdown
@@ -111,7 +113,7 @@ export const MessageBubble = memo(function MessageBubble({
                   },
                 }}
               >
-                {message.content || '...'}
+                {displayContent || '...'}
               </ReactMarkdown>
             </div>
           )}

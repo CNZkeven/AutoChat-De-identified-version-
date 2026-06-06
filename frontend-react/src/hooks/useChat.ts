@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { fetchSSE } from '../services/api';
 import { conversationService } from '../services/conversations';
+import { looksLikeToolCallLeak } from '../utils/toolCallGuard';
 import type { Message, AgentType } from '../types';
 
 interface UseChatOptions {
@@ -91,11 +92,22 @@ export function useChat({ agent, conversationId, isGuest = false, onMessageSent 
           signal: abortRef.current.signal,
           onMessage: (data) => {
             if (data.content) {
-              streamingMessageRef.current += data.content;
+              const nextContent = streamingMessageRef.current + data.content;
+              streamingMessageRef.current = nextContent;
+              if (looksLikeToolCallLeak(nextContent)) {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantId
+                      ? { ...m, content: '' }
+                      : m
+                  )
+                );
+                return;
+              }
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantId
-                    ? { ...m, content: streamingMessageRef.current }
+                    ? { ...m, content: nextContent }
                     : m
                 )
               );
@@ -108,6 +120,9 @@ export function useChat({ agent, conversationId, isGuest = false, onMessageSent 
             setError(err.message);
           },
           onComplete: () => {
+            if (looksLikeToolCallLeak(streamingMessageRef.current)) {
+              setMessages((prev) => prev.filter((m) => m.id !== assistantId));
+            }
             onMessageSent?.();
           },
         });

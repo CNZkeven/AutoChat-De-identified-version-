@@ -1,5 +1,6 @@
 import api from './api';
 import type { Conversation, Message, AgentType } from '../types';
+import { removeToolCallLeakMessages } from '../utils/toolCallGuard';
 
 export const conversationService = {
   async list(agent: AgentType): Promise<Conversation[]> {
@@ -29,6 +30,6 @@ export const conversationService = {
     const response = await api.get<Message[]>(
       `/api/conversations/${conversationId}/messages?agent=${agent}`
     );
-    return response.data;
+    return removeToolCallLeakMessages(response.data);
   },
 };

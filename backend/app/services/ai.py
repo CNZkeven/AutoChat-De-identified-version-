@@ -47,6 +47,8 @@ def call_ai_model_stream(
     messages: list[dict],
     api_key: str,
     base_url: str,
+    max_tokens: int = 4096,
+    temperature: float = 0.7,
 ) -> Iterable[str]:
     if not api_key:
         raise RuntimeError("Agent API key is not configured")
@@ -58,8 +60,8 @@ def call_ai_model_stream(
         model=model_name,
         messages=messages,
         stream=True,
-        max_tokens=4096,
-        temperature=0.7,
+        max_tokens=max_tokens,
+        temperature=temperature,
     )
     for chunk in response:
         try:

@@ -28,8 +28,8 @@ from ..services.orchestrator import (
     execute_plan,
     identify_missing_slots,
     plan_with_tools,
+    stream_synthesize_with_tools,
     stream_without_tools,
-    synthesize_with_tools,
 )
 from ..services.title import generate_conversation_title
 from ..services.tool_logging import write_agent_log
@@ -488,7 +488,7 @@ def chat(
                             "tools": [],
                         }
                     )
-                    final_text = synthesize_with_tools(
+                    chunk_iter = stream_synthesize_with_tools(
                         messages_for_round,
                         assistant_content,
                         tool_calls,
@@ -498,15 +498,6 @@ def chat(
                         base_url,
                         resolved_agent,
                     )
-                    add_trace(
-                        {
-                            "type": "llm_response",
-                            "stage": "synthesis",
-                            "source": "llm",
-                            "content": final_text,
-                        }
-                    )
-                    chunk_iter = [final_text] if final_text else []
                 else:
                     if assistant_content:
                         final_text = assistant_content
@@ -539,7 +530,7 @@ def chat(
                     add_trace(
                         {
                             "type": "llm_response",
-                            "stage": "direct",
+                            "stage": "synthesis" if tool_calls else "direct",
                             "source": "llm",
                             "content": final_text,
                         }

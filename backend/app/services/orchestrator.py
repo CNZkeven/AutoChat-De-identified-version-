@@ -14,7 +14,13 @@ logger = logging.getLogger(__name__)
 
 FINAL_TOOL_INSTRUCTION = "工具结果已提供，请基于工具结果给出最终回复，禁止再调用工具或输出工具调用格式。"
 RETRY_TOOL_LEAK_INSTRUCTION = "再次强调：直接给出最终回复，不要输出任何工具调用。"
+DIRECT_NO_TOOL_INSTRUCTION = (
+    "当前工具通道不可用，不能调用工具。请直接面向用户作答；"
+    "如缺少内部数据，请说明暂无可用数据。禁止输出 JSON、<tool_call> 或任何工具调用格式。"
+)
 FALLBACK_MESSAGE = "模型服务暂时不可用，请稍后再试。"
+SYNTHESIS_MAX_TOKENS = 4096
+STREAM_GUARD_BUFFER_LIMIT = 512
 
 
 def _extract_last_user_message(messages: list[dict[str, Any]]) -> str:
@@ -105,6 +111,18 @@ def _build_tool_messages(
     return assistant_message, tool_messages
 
 
+def _build_synthesis_messages(
+    messages: list[dict[str, Any]],
+    assistant_content: str,
+    tool_calls: list[dict[str, Any]],
+    tool_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    assistant_message, tool_messages = _build_tool_messages(tool_calls, tool_results, assistant_content)
+    final_messages = messages + [assistant_message] + tool_messages
+    final_messages.append({"role": "system", "content": FINAL_TOOL_INSTRUCTION})
+    return final_messages
+
+
 def _extract_json_payload(content: str) -> str | None:
     if not content:
         return None
@@ -122,28 +140,175 @@ def _extract_json_payload(content: str) -> str | None:
     return candidate.strip()
 
 
+def _coerce_tool_args(args: Any) -> dict[str, Any]:
+    if isinstance(args, dict):
+        return args
+    if isinstance(args, str):
+        try:
+            parsed = json.loads(args)
+        except Exception:
+            return {"_raw": args}
+        return parsed if isinstance(parsed, dict) else {"_raw": args}
+    return {"_raw": args}
+
+
+def _collect_json_tool_calls(data: Any) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+
+    def append_call(item: Any) -> None:
+        if not isinstance(item, dict):
+            return
+        if "tool" in item and "args" in item:
+            calls.append(
+                {
+                    "id": item.get("id"),
+                    "name": item.get("tool"),
+                    "args": _coerce_tool_args(item.get("args", {})),
+                }
+            )
+            return
+        function = item.get("function")
+        if isinstance(function, dict) and function.get("name"):
+            calls.append(
+                {
+                    "id": item.get("id"),
+                    "name": function.get("name"),
+                    "args": _coerce_tool_args(function.get("arguments", {})),
+                }
+            )
+            return
+        if "name" in item and "arguments" in item:
+            calls.append(
+                {
+                    "id": item.get("id"),
+                    "name": item.get("name"),
+                    "args": _coerce_tool_args(item.get("arguments", {})),
+                }
+            )
+
+    if isinstance(data, dict):
+        append_call(data)
+        if isinstance(data.get("tool_calls"), list):
+            for item in data["tool_calls"]:
+                append_call(item)
+    elif isinstance(data, list):
+        for item in data:
+            append_call(item)
+    return calls
+
+
+def _parse_json_values(payload: str) -> list[Any]:
+    try:
+        return [json.loads(payload)]
+    except Exception:
+        pass
+
+    decoder = json.JSONDecoder()
+    values: list[Any] = []
+    index = 0
+    length = len(payload)
+    while index < length:
+        while index < length and payload[index].isspace():
+            index += 1
+        if index >= length:
+            break
+        if payload[index] not in "{[":
+            return []
+        try:
+            value, index = decoder.raw_decode(payload, index)
+        except Exception:
+            return []
+        values.append(value)
+    return values
+
+
 def _parse_json_tool_calls(content: str) -> list[dict[str, Any]]:
     payload = _extract_json_payload(content)
     if not payload:
         return []
-    try:
-        data = json.loads(payload)
-    except Exception:
-        return []
     calls: list[dict[str, Any]] = []
-    if isinstance(data, dict):
-        if "tool" in data and "args" in data:
-            calls.append({"id": None, "name": data.get("tool"), "args": data.get("args", {})})
-        if isinstance(data.get("tool_calls"), list):
-            for item in data["tool_calls"]:
-                if isinstance(item, dict) and "tool" in item and "args" in item:
-                    calls.append({"id": item.get("id"), "name": item.get("tool"), "args": item.get("args", {})})
-        return calls
-    if isinstance(data, list):
-        for item in data:
-            if isinstance(item, dict) and "tool" in item and "args" in item:
-                calls.append({"id": item.get("id"), "name": item.get("tool"), "args": item.get("args", {})})
+    for value in _parse_json_values(payload):
+        calls.extend(_collect_json_tool_calls(value))
     return calls
+
+
+def _looks_like_tool_call_leak(content: str) -> bool:
+    if not content:
+        return False
+    if "<tool_call>" in content or "</tool_call>" in content:
+        return True
+    if _parse_json_tool_calls(content):
+        return True
+    return '"tool"' in content and '"args"' in content
+
+
+def _should_hold_stream_buffer(content: str) -> bool:
+    stripped = content.lstrip()
+    if not stripped:
+        return True
+    if len(content) >= STREAM_GUARD_BUFFER_LIMIT:
+        return False
+    return stripped.startswith(("{", "[", "<", "```"))
+
+
+def _retry_after_tool_leak(
+    model_name: str,
+    messages: list[dict[str, Any]],
+    api_key: str,
+    base_url: str,
+    log_entry: dict[str, Any],
+) -> list[str]:
+    retry_messages = messages + [{"role": "system", "content": RETRY_TOOL_LEAK_INSTRUCTION}]
+    retry_text = call_ai_model(
+        model_name,
+        retry_messages,
+        api_key=api_key,
+        base_url=base_url,
+        max_tokens=SYNTHESIS_MAX_TOKENS,
+    )
+    if _looks_like_tool_call_leak(retry_text):
+        write_agent_log(log_entry)
+        return [FALLBACK_MESSAGE]
+    return [retry_text] if retry_text else [FALLBACK_MESSAGE]
+
+
+def _stream_with_tool_leak_guard(
+    model_name: str,
+    messages: list[dict[str, Any]],
+    api_key: str,
+    base_url: str,
+    log_entry: dict[str, Any],
+) -> Any:
+    pending = ""
+    released = False
+    for chunk in call_ai_model_stream(
+        model_name,
+        messages,
+        api_key=api_key,
+        base_url=base_url,
+        max_tokens=SYNTHESIS_MAX_TOKENS,
+    ):
+        if not chunk:
+            continue
+        if released:
+            yield chunk
+            continue
+        pending += chunk
+        if _looks_like_tool_call_leak(pending):
+            for retry_chunk in _retry_after_tool_leak(model_name, messages, api_key, base_url, log_entry):
+                yield retry_chunk
+            return
+        if _should_hold_stream_buffer(pending):
+            continue
+        released = True
+        yield pending
+
+    if pending and not released:
+        if _looks_like_tool_call_leak(pending):
+            for retry_chunk in _retry_after_tool_leak(model_name, messages, api_key, base_url, log_entry):
+                yield retry_chunk
+        else:
+            yield pending
 
 
 def _augment_tool_calls(agent: str, messages: list[dict[str, Any]], tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -503,6 +668,7 @@ def plan_with_tools(
     error: str | None = None
     if tools_payload:
         try:
+            planning_content = ""
             assistant_content, tool_calls, raw_tool_calls = call_ai_model_with_tools(
                 model_name,
                 messages,
@@ -510,13 +676,17 @@ def plan_with_tools(
                 base_url=base_url,
                 tools=tools_payload,
             )
+            planning_content = assistant_content
             if not tool_calls and assistant_content:
                 tool_calls = _parse_json_tool_calls(assistant_content)
                 used_json_fallback = bool(tool_calls)
             tool_calls = _augment_tool_calls(agent, messages, tool_calls)
+            if assistant_content and _looks_like_tool_call_leak(assistant_content):
+                assistant_content = ""
         except Exception as exc:
             logger.exception("Tool planning failed, falling back to no-tool flow")
             error = str(exc)
+            planning_content = assistant_content
 
     plan = _build_plan(tool_calls, registry)
     write_agent_log(
@@ -526,7 +696,7 @@ def plan_with_tools(
             "conversation_id": conversation_id,
             "user_id": user_id,
             "tool_calls": raw_tool_calls,
-            "assistant_content": assistant_content,
+            "assistant_content": planning_content if tools_payload else assistant_content,
             "json_fallback": used_json_fallback,
             "plan": plan,
             "error": error,
@@ -597,18 +767,77 @@ def synthesize_with_tools(
             }
         )
         return fallback
-    assistant_message, tool_messages = _build_tool_messages(tool_calls, tool_results, assistant_content)
-    final_messages = messages + [assistant_message] + tool_messages
-    final_messages.append({"role": "system", "content": FINAL_TOOL_INSTRUCTION})
+    final_messages = _build_synthesis_messages(messages, assistant_content, tool_calls, tool_results)
     try:
-        final_text = call_ai_model(model_name, final_messages, api_key=api_key, base_url=base_url)
-        if "<tool_call>" in final_text or "\"tool\"" in final_text:
+        final_text = call_ai_model(
+            model_name,
+            final_messages,
+            api_key=api_key,
+            base_url=base_url,
+            max_tokens=SYNTHESIS_MAX_TOKENS,
+        )
+        if _looks_like_tool_call_leak(final_text):
             final_messages.append({"role": "system", "content": RETRY_TOOL_LEAK_INSTRUCTION})
-            final_text = call_ai_model(model_name, final_messages, api_key=api_key, base_url=base_url)
+            final_text = call_ai_model(
+                model_name,
+                final_messages,
+                api_key=api_key,
+                base_url=base_url,
+                max_tokens=SYNTHESIS_MAX_TOKENS,
+            )
+        if _looks_like_tool_call_leak(final_text):
+            write_agent_log(
+                {
+                    "event": "tool_call_leak_guard",
+                    "agent": agent,
+                    "note": "synthesis response suppressed because it still contained tool-call format",
+                }
+            )
+            return FALLBACK_MESSAGE
         return final_text
     except Exception:
         logger.exception("Synthesis failed, returning fallback response")
         return FALLBACK_MESSAGE
+
+
+def stream_synthesize_with_tools(
+    messages: list[dict[str, Any]],
+    assistant_content: str,
+    tool_calls: list[dict[str, Any]],
+    tool_results: list[dict[str, Any]],
+    model_name: str,
+    api_key: str,
+    base_url: str,
+    agent: str,
+) -> Any:
+    try:
+        if agent == "course" and not _tool_results_have_course_data(tool_results):
+            fallback = _build_course_no_data_response(_extract_last_user_message(messages))
+            write_agent_log(
+                {
+                    "event": "course_empty_guard",
+                    "agent": agent,
+                    "note": "course response fallback used due to empty tool results",
+                }
+            )
+            yield fallback
+            return
+
+        final_messages = _build_synthesis_messages(messages, assistant_content, tool_calls, tool_results)
+        yield from _stream_with_tool_leak_guard(
+            model_name,
+            final_messages,
+            api_key,
+            base_url,
+            {
+                "event": "tool_call_leak_guard",
+                "agent": agent,
+                "note": "synthesis stream response suppressed because it still contained tool-call format",
+            },
+        )
+    except Exception:
+        logger.exception("Synthesis stream failed, returning fallback response")
+        yield FALLBACK_MESSAGE
 
 
 def stream_without_tools(
@@ -618,7 +847,17 @@ def stream_without_tools(
     base_url: str,
 ) -> Any:
     try:
-        return call_ai_model_stream(model_name, messages, api_key=api_key, base_url=base_url)
+        guarded_messages = messages + [{"role": "system", "content": DIRECT_NO_TOOL_INSTRUCTION}]
+        yield from _stream_with_tool_leak_guard(
+            model_name,
+            guarded_messages,
+            api_key,
+            base_url,
+            {
+                "event": "tool_call_leak_guard",
+                "note": "direct stream response suppressed because it still contained tool-call format",
+            },
+        )
     except Exception:
         logger.exception("Streaming failed, returning fallback response")
-        return [FALLBACK_MESSAGE]
+        yield FALLBACK_MESSAGE
